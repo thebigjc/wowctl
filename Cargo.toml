@@ -1,0 +1,27 @@
+[package]
+name = "wowctl"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1.41", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+zip = "2.2"
+dirs = "5.0"
+owo-colors = { version = "4.1", features = ["supports-colors"] }
+dialoguer = "0.11"
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.0", features = ["v4"] }
+fs2 = "0.4"
+httpdate = "1.0.3"
+
+[dev-dependencies]
+tempfile = "3"

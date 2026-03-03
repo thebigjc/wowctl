@@ -1,0 +1,10 @@
+pub mod adopt;
+pub mod auto_update;
+pub mod config;
+pub mod ignore;
+pub mod info;
+pub mod install;
+pub mod list;
+pub mod remove;
+pub mod search;
+pub mod update;
