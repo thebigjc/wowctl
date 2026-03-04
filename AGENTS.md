@@ -19,7 +19,6 @@ src/
   addon.rs             # Core data structures (AddonInfo, InstalledAddon, etc.)
   error.rs             # Error types (thiserror)
   circuit_breaker.rs   # Circuit breaker (Closed/Open/HalfOpen) for API resilience
-  fingerprint.rs       # CurseForge-compatible MurmurHash2 fingerprinting
   utils.rs             # Zip extraction, .toc parsing, disk space, helpers
   colors.rs            # Colored output with global enable/disable
   commands/

@@ -10,7 +10,6 @@ pub mod colors;
 pub mod commands;
 pub mod config;
 pub mod error;
-pub(crate) mod fingerprint;
 pub mod registry;
 pub mod sources;
 pub mod utils;
