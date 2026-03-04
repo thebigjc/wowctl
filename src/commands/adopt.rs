@@ -145,6 +145,12 @@ async fn adopt_single(
     Ok(())
 }
 
+// TODO: Consider fingerprint-based scanning like WoWUp — compute MurmurHash2 (whitespace-
+// stripped, seed 1) per addon folder, batch-send to POST /v1/fingerprints, and match against
+// file.modules[].fingerprint. This would identify the exact installed version (not just the
+// addon) and work even when TOC files lack X-Curse-Project-ID. See WoWUp's scan() in
+// curse-addon-provider.ts for reference.
+
 /// Tries to identify the CurseForge addon from .toc metadata, falling back to name search.
 async fn resolve_addon_from_folder(
     folder: &str,
