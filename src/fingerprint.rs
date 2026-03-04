@@ -4,6 +4,11 @@
 //! over their contents with whitespace bytes stripped. This module provides
 //! the hash function, helpers for computing fingerprints, and TOC/XML include
 //! chain walking to determine which files belong to an addon's fingerprint.
+//!
+//! These utilities are not yet wired into the main CLI but are staged for
+//! fingerprint-based addon matching (see AGENTS.md § WoWUp reference).
+
+#![allow(dead_code)]
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
