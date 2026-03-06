@@ -8,6 +8,10 @@ use crate::error::{Result, WowctlError};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+mod embedded_key {
+    include!(concat!(env!("OUT_DIR"), "/embedded_key.rs"));
+}
+
 /// Main configuration structure for wowctl.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -86,18 +90,24 @@ impl Config {
         Ok(())
     }
 
-    /// Gets the CurseForge API key from environment variable or config file.
-    /// Environment variable takes precedence.
+    /// Gets the CurseForge API key.
+    /// Precedence: environment variable > config file > embedded build-time key.
     pub fn get_api_key(&self) -> Result<String> {
         if let Ok(key) = std::env::var("WOWCTL_CURSEFORGE_API_KEY") {
             return Ok(key);
         }
 
-        self.curseforge_api_key
-            .clone()
-            .ok_or_else(|| WowctlError::MissingApiKey(
-                "CurseForge API key not found. Run 'wowctl config init' or set WOWCTL_CURSEFORGE_API_KEY environment variable".to_string()
-            ))
+        if let Some(ref key) = self.curseforge_api_key {
+            return Ok(key.clone());
+        }
+
+        if let Some(key) = embedded_key::embedded_api_key() {
+            return Ok(key);
+        }
+
+        Err(WowctlError::MissingApiKey(
+            "CurseForge API key not found. Run 'wowctl config init' or set WOWCTL_CURSEFORGE_API_KEY environment variable".to_string()
+        ))
     }
 
     /// Resolves the release channel: CLI override > config default > Stable.
