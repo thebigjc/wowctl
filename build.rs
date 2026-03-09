@@ -8,7 +8,8 @@ const EXPECTED_KEY_LEN: usize = 60;
 fn main() {
     println!("cargo:rerun-if-env-changed=CURSEFORGE_API_KEY");
     println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/refs/tags");
+    println!("cargo:rerun-if-changed=.git/refs");
+    println!("cargo:rerun-if-changed=.git/packed-refs");
 
     let out_dir = env::var("OUT_DIR").unwrap();
 
