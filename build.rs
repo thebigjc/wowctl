@@ -10,6 +10,7 @@ fn main() {
 
     match env::var("CURSEFORGE_API_KEY") {
         Ok(key) if !key.is_empty() => {
+            println!("cargo:warning=CURSEFORGE_API_KEY is set ({} bytes), embedding obfuscated key", key.len());
             let code = format!(
                 r#"
 pub fn embedded_api_key() -> Option<String> {{
@@ -21,6 +22,7 @@ pub fn embedded_api_key() -> Option<String> {{
             fs::write(dest, code).unwrap();
         }
         _ => {
+            println!("cargo:warning=CURSEFORGE_API_KEY not set, embedded key will be None");
             fs::write(
                 dest,
                 r#"
