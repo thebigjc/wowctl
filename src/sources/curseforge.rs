@@ -240,7 +240,7 @@ impl CurseForgeSource {
     /// Creates a new CurseForge source with the provided API key.
     pub fn new(api_key: String) -> Result<Self> {
         let client = Client::builder()
-            .user_agent("wowctl/0.1.0")
+            .user_agent(format!("wowctl/{}", env!("WOWCTL_VERSION")))
             .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
             .build()
             .map_err(|e| WowctlError::Network(format!("Failed to create HTTP client: {}", e)))?;

@@ -6,7 +6,7 @@ use wowctl::error::Result;
 #[derive(Parser)]
 #[command(name = "wowctl")]
 #[command(about = "World of Warcraft Addon Manager", long_about = None)]
-#[command(version)]
+#[command(version = env!("WOWCTL_VERSION"))]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -180,7 +180,7 @@ async fn main() -> Result<()> {
     }
 
     tracing::debug!("wowctl starting with verbose logging enabled");
-    tracing::info!("wowctl version {}", env!("CARGO_PKG_VERSION"));
+    tracing::info!("wowctl version {}", env!("WOWCTL_VERSION"));
 
     match cli.command {
         Commands::Config { action } => match action {
