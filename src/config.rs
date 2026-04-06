@@ -150,6 +150,17 @@ impl Config {
             }
         }
 
+        #[cfg(target_os = "linux")]
+        {
+            // WSL: Windows drives are mounted under /mnt/<letter>/
+            let path = PathBuf::from(
+                "/mnt/c/Program Files (x86)/World of Warcraft/_retail_/Interface/AddOns",
+            );
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+
         Err(WowctlError::InvalidAddonDir(
             "Could not auto-detect WoW addon directory. Please set it manually with 'wowctl config set addon_dir <path>'".to_string()
         ))
