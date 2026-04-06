@@ -71,12 +71,28 @@ pub fn extract_zip(zip_path: &Path, extract_to: &Path) -> Result<Vec<String>> {
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let outpath = match file.enclosed_name() {
-            Some(path) => extract_to.join(path),
-            None => continue,
+
+        // Normalize Windows-style backslash paths to forward slashes.
+        // Zip files created on Windows may use `\` as the separator, which
+        // Linux treats as a literal filename character instead of a directory
+        // boundary.
+        let normalized_name = file.name().replace('\\', "/");
+        let normalized_path = Path::new(&normalized_name);
+
+        // Safety check: reject paths with `..` components or absolute paths
+        let safe_path = match normalized_path.components().all(|c| {
+            matches!(
+                c,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        }) {
+            true => normalized_path,
+            false => continue,
         };
 
-        if file.name().ends_with('/') {
+        let outpath = extract_to.join(safe_path);
+
+        if normalized_name.ends_with('/') {
             debug!("Creating directory: {}", outpath.display());
             fs::create_dir_all(&outpath)?;
         } else {
@@ -90,8 +106,7 @@ pub fn extract_zip(zip_path: &Path, extract_to: &Path) -> Result<Vec<String>> {
             std::io::copy(&mut file, &mut outfile)?;
         }
 
-        if let Some(enclosed) = file.enclosed_name()
-            && let Some(std::path::Component::Normal(dir_name)) = enclosed.components().next()
+        if let Some(std::path::Component::Normal(dir_name)) = safe_path.components().next()
             && let Some(dir_str) = dir_name.to_str()
         {
             extracted_dirs.insert(dir_str.to_string());
@@ -115,22 +130,101 @@ pub fn extract_zip_to_temp(zip_path: &Path) -> Result<(PathBuf, Vec<String>)> {
 }
 
 /// Moves addon directories from a temporary location to the addon directory.
+/// Falls back to recursive copy + remove when source and destination are on
+/// different filesystems (e.g. WSL tmp → Windows mount).
 pub fn move_addon_dirs(temp_dir: &Path, addon_dir: &Path, directories: &[String]) -> Result<()> {
     info!("Moving addon directories to {}", addon_dir.display());
+    debug!("move_addon_dirs: directories to move: {:?}", directories);
 
     for dir_name in directories {
         let src = temp_dir.join(dir_name);
         let dest = addon_dir.join(dir_name);
+        debug!("move_addon_dirs: processing '{}': src={}, dest={}", dir_name, src.display(), dest.display());
+        debug!("move_addon_dirs: src.exists()={}, dest.exists()={}", src.exists(), dest.exists());
 
         if dest.exists() {
-            debug!("Removing existing directory: {}", dest.display());
-            fs::remove_dir_all(&dest)?;
+            debug!("move_addon_dirs: dest metadata: is_dir={}, is_file={}, is_symlink={}", dest.is_dir(), dest.is_file(), dest.is_symlink());
+            if dest.is_file() || dest.is_symlink() {
+                warn!(
+                    "Expected directory but found file at: {}",
+                    dest.display()
+                );
+                let prompt = format!(
+                    "'{}' exists as a file where a directory is expected. Remove it?",
+                    dest.display()
+                );
+                let confirmed = dialoguer::Confirm::new()
+                    .with_prompt(prompt)
+                    .default(false)
+                    .interact()
+                    .unwrap_or(false);
+                if !confirmed {
+                    return Err(WowctlError::Io(std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        format!(
+                            "Cannot install: '{}' is a file, not a directory",
+                            dest.display()
+                        ),
+                    )));
+                }
+                fs::remove_file(&dest)?;
+            } else {
+                debug!("move_addon_dirs: removing existing directory: {}", dest.display());
+                fs::remove_dir_all(&dest).map_err(|e| {
+                    warn!("move_addon_dirs: remove_dir_all({}) failed: errno {:?}: {}", dest.display(), e.raw_os_error(), e);
+                    e
+                })?;
+            }
         }
 
-        debug!("Moving {} to {}", src.display(), dest.display());
-        fs::rename(&src, &dest)?;
+        debug!("move_addon_dirs: rename {} -> {}", src.display(), dest.display());
+        match fs::rename(&src, &dest) {
+            Ok(()) => {
+                debug!("move_addon_dirs: rename succeeded for {}", dir_name);
+            }
+            Err(e) if e.raw_os_error() == Some(18 /* EXDEV */) => {
+                debug!("move_addon_dirs: EXDEV on rename, falling back to copy");
+                copy_dir_recursive(&src, &dest)?;
+                fs::remove_dir_all(&src)?;
+            }
+            Err(e) => {
+                // WSL/DrvFS can return unexpected errno values (e.g. ENOTDIR)
+                // for cross-filesystem renames. Fall back to copy for any error.
+                warn!(
+                    "move_addon_dirs: rename({} -> {}) failed: errno {:?}: {}, falling back to copy",
+                    src.display(), dest.display(), e.raw_os_error(), e
+                );
+                copy_dir_recursive(&src, &dest)?;
+                fs::remove_dir_all(&src)?;
+            }
+        }
+        debug!("move_addon_dirs: done with '{}'", dir_name);
     }
 
+    Ok(())
+}
+
+/// Recursively copies a directory tree from `src` to `dst`.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    debug!("copy_dir_recursive: create_dir_all({})", dst.display());
+    fs::create_dir_all(dst).map_err(|e| {
+        warn!("copy_dir_recursive: create_dir_all({}) failed: errno {:?}: {}", dst.display(), e.raw_os_error(), e);
+        e
+    })?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            debug!("copy_dir_recursive: copy {} -> {}", src_path.display(), dst_path.display());
+            fs::copy(&src_path, &dst_path).map_err(|e| {
+                warn!("copy_dir_recursive: copy({} -> {}) failed: errno {:?}: {}", src_path.display(), dst_path.display(), e.raw_os_error(), e);
+                e
+            })?;
+        }
+    }
     Ok(())
 }
 
@@ -508,14 +602,22 @@ pub fn backup_addon_dirs(addon_dir: &Path, directories: &[String]) -> Result<Vec
     for dir_name in directories {
         let original = addon_dir.join(dir_name);
         if !original.exists() {
+            debug!("backup_addon_dirs: {} does not exist, skipping", original.display());
             continue;
         }
         let backup = addon_dir.join(format!("{}{}", dir_name, BACKUP_SUFFIX));
         if backup.exists() {
-            fs::remove_dir_all(&backup)?;
+            debug!("backup_addon_dirs: removing old backup {}", backup.display());
+            fs::remove_dir_all(&backup).map_err(|e| {
+                warn!("backup_addon_dirs: remove_dir_all({}) failed: errno {:?}: {}", backup.display(), e.raw_os_error(), e);
+                e
+            })?;
         }
-        debug!("Backing up {} -> {}", original.display(), backup.display());
-        fs::rename(&original, &backup)?;
+        debug!("backup_addon_dirs: rename {} -> {}", original.display(), backup.display());
+        fs::rename(&original, &backup).map_err(|e| {
+            warn!("backup_addon_dirs: rename({} -> {}) failed: errno {:?}: {}", original.display(), backup.display(), e.raw_os_error(), e);
+            e
+        })?;
         backed_up.push(dir_name.clone());
     }
 

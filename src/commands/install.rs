@@ -184,11 +184,16 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
         } else {
             ""
         };
+        let version_display = if downloaded.version_info.version.starts_with('v') {
+            downloaded.version_info.version.clone()
+        } else {
+            format!("v{}", downloaded.version_info.version)
+        };
         print!(
-            "{}{} v{}... ",
+            "{}{} {}... ",
             prefix,
             downloaded.addon_info.name.color_cyan(),
-            downloaded.version_info.version.color_green()
+            version_display.color_green()
         );
         let _ = std::io::Write::flush(&mut std::io::stdout());
 

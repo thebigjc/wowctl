@@ -125,6 +125,12 @@ enum Commands {
         #[arg(help = "Addon slug to disable auto-update for")]
         addon: String,
     },
+
+    #[command(about = "Find addons with no updates in a long time")]
+    Stale {
+        #[arg(long, default_value = "3", help = "Number of months without an update to consider stale")]
+        months: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -223,6 +229,7 @@ async fn main() -> Result<()> {
             all,
             slug,
         } => wowctl::commands::adopt::adopt(addon_folder.as_deref(), all, slug.as_deref()).await,
+        Commands::Stale { months } => wowctl::commands::stale::stale(months).await,
         Commands::Ignore { addon } => wowctl::commands::ignore::ignore(&addon).await,
         Commands::Unignore { addon } => wowctl::commands::ignore::unignore(&addon).await,
         Commands::AutoUpdate { addon } => wowctl::commands::auto_update::enable(&addon).await,

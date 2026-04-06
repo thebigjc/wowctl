@@ -1009,10 +1009,31 @@ impl AddonSource for CurseForgeSource {
             )));
         }
 
+        // Reject HTML error pages that CDNs sometimes serve with 200 OK
+        if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
+            if let Ok(ct) = content_type.to_str() {
+                if ct.contains("text/html") || ct.contains("text/plain") {
+                    return Err(WowctlError::Network(format!(
+                        "CDN returned {} instead of a zip file — the download URL may be invalid: {}",
+                        ct, download_url
+                    )));
+                }
+            }
+        }
+
         let bytes = response
             .bytes()
             .await
             .map_err(|e| WowctlError::Network(format!("Failed to read download: {}", e)))?;
+
+        // Validate ZIP magic bytes (PK\x03\x04) before writing to disk
+        if bytes.len() < 4 || &bytes[..4] != b"PK\x03\x04" {
+            return Err(WowctlError::Extraction(format!(
+                "Downloaded file is not a valid zip archive (bad magic bytes). \
+                 The CDN may have returned an error page. URL: {}",
+                download_url
+            )));
+        }
 
         if let Some(parent) = destination.parent() {
             tokio::fs::create_dir_all(parent).await?;
