@@ -1002,23 +1002,44 @@ impl AddonSource for CurseForgeSource {
             .await
             .map_err(|e| WowctlError::Network(format!("Failed to download addon: {}", e)))?;
 
-        if !response.status().is_success() {
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("(not set)")
+            .to_string();
+        let content_length = response
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("(not set)")
+            .to_string();
+        let content_encoding = response
+            .headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("(not set)")
+            .to_string();
+
+        info!(
+            "Response: status={}, content-type={}, content-length={}, content-encoding={}",
+            status, content_type, content_length, content_encoding
+        );
+
+        if !status.is_success() {
             return Err(WowctlError::Network(format!(
                 "Download failed with status: {}",
-                response.status()
+                status
             )));
         }
 
         // Reject HTML error pages that CDNs sometimes serve with 200 OK
-        if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
-            if let Ok(ct) = content_type.to_str() {
-                if ct.contains("text/html") || ct.contains("text/plain") {
-                    return Err(WowctlError::Network(format!(
-                        "CDN returned {} instead of a zip file — the download URL may be invalid: {}",
-                        ct, download_url
-                    )));
-                }
-            }
+        if content_type.contains("text/html") || content_type.contains("text/plain") {
+            return Err(WowctlError::Network(format!(
+                "CDN returned {} instead of a zip file — the download URL may be invalid: {}",
+                content_type, download_url
+            )));
         }
 
         let bytes = response
@@ -1026,11 +1047,33 @@ impl AddonSource for CurseForgeSource {
             .await
             .map_err(|e| WowctlError::Network(format!("Failed to read download: {}", e)))?;
 
+        info!("Downloaded {} bytes", bytes.len());
+
+        // Log first and last bytes for diagnosing corrupted/truncated downloads
+        if bytes.len() >= 16 {
+            debug!("First 16 bytes: {:02x?}", &bytes[..16]);
+            debug!(
+                "Last 16 bytes: {:02x?}",
+                &bytes[bytes.len() - 16..]
+            );
+        }
+        if bytes.len() < 1024 {
+            // If the body is suspiciously small, log it as text for debugging
+            info!(
+                "Response body (small, {} bytes): {:?}",
+                bytes.len(),
+                String::from_utf8_lossy(&bytes)
+            );
+        }
+
         // Validate ZIP magic bytes (PK\x03\x04) before writing to disk
         if bytes.len() < 4 || &bytes[..4] != b"PK\x03\x04" {
             return Err(WowctlError::Extraction(format!(
                 "Downloaded file is not a valid zip archive (bad magic bytes). \
+                 Got {} bytes, first 4: {:02x?}. \
                  The CDN may have returned an error page. URL: {}",
+                bytes.len(),
+                &bytes[..bytes.len().min(4)],
                 download_url
             )));
         }
@@ -1041,6 +1084,7 @@ impl AddonSource for CurseForgeSource {
 
         let mut file = tokio::fs::File::create(destination).await?;
         file.write_all(&bytes).await?;
+        file.flush().await?;
 
         info!("Downloaded to: {}", destination.display());
         Ok(destination.to_path_buf())
