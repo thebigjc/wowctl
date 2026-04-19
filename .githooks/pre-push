@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Pre-push hook: ensure clippy passes with no warnings before pushing.
+# Install with: git config core.hooksPath .githooks
+
+set -e
+
+echo "Running clippy checks before push..."
+cargo clippy -- -D warnings
+echo "Clippy passed."
