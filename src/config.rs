@@ -67,7 +67,7 @@ impl Config {
         }
 
         let contents = std::fs::read_to_string(&config_path)
-            .map_err(|e| WowctlError::Config(format!("Failed to read config file: {}", e)))?;
+            .map_err(|e| WowctlError::Config(format!("Failed to read config file: {e}")))?;
 
         let config: Config = toml::from_str(&contents)?;
         Ok(config)

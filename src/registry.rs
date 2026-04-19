@@ -32,10 +32,10 @@ impl Registry {
         }
 
         let contents = std::fs::read_to_string(&registry_path)
-            .map_err(|e| WowctlError::Registry(format!("Failed to read registry: {}", e)))?;
+            .map_err(|e| WowctlError::Registry(format!("Failed to read registry: {e}")))?;
 
         let registry: Registry = toml::from_str(&contents)
-            .map_err(|e| WowctlError::Registry(format!("Failed to parse registry: {}", e)))?;
+            .map_err(|e| WowctlError::Registry(format!("Failed to parse registry: {e}")))?;
 
         Ok(registry)
     }

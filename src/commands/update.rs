@@ -66,7 +66,7 @@ pub async fn update(
             } else {
                 println!(
                     "{}",
-                    format!("Addon '{}' is not installed", slug).color_red()
+                    format!("Addon '{slug}' is not installed").color_red()
                 );
                 return Ok(());
             }
@@ -314,7 +314,7 @@ pub async fn update(
                 println!("{}", "done.".color_green());
             }
             Err(e) => {
-                println!("{}", format!("failed: {}", e).color_red());
+                println!("{}", format!("failed: {e}").color_red());
             }
         }
     }
@@ -516,8 +516,7 @@ async fn refresh_stale_metadata(
 
     if refreshed > 0 {
         println!(
-            "Refreshed metadata for {} addon(s) with outdated registry entries.",
-            refreshed
+            "Refreshed metadata for {refreshed} addon(s) with outdated registry entries."
         );
     }
 

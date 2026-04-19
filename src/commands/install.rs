@@ -53,7 +53,7 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
     let addon_info = source.get_addon_by_slug(&slug).await?;
 
     let channel_label = if channel != ReleaseChannel::Stable {
-        format!(" ({})", channel)
+        format!(" ({channel})")
     } else {
         String::new()
     };
@@ -104,7 +104,7 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
                 .get_addon_infos_batch(&new_dep_ids)
                 .await
                 .map_err(|e| {
-                    WowctlError::Dependency(format!("Failed to resolve dependencies: {}", e))
+                    WowctlError::Dependency(format!("Failed to resolve dependencies: {e}"))
                 })?;
 
             for dep_info in dep_infos {
@@ -170,8 +170,7 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
             Err(join_err) => {
                 cleanup_downloaded(&downloads);
                 return Err(WowctlError::Source(format!(
-                    "Download task failed: {}",
-                    join_err
+                    "Download task failed: {join_err}"
                 )));
             }
         }

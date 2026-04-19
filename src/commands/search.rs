@@ -12,7 +12,7 @@ pub async fn search(query: &str, page: Option<u32>) -> Result<()> {
     let result = source.search(query, page).await?;
 
     if result.addons.is_empty() {
-        println!("No results found for '{}'", query);
+        println!("No results found for '{query}'");
         return Ok(());
     }
 
@@ -62,6 +62,6 @@ fn format_download_count(count: u64) -> String {
     } else if count >= 1_000 {
         format!("{:.1}K downloads", count as f64 / 1_000.0)
     } else {
-        format!("{} downloads", count)
+        format!("{count} downloads")
     }
 }
