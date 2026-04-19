@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 const CURSEFORGE_API_BASE: &str = "https://api.curseforge.com/v1";
 const CURSEFORGE_CDN_BASE: &str = "https://edge.forgecdn.net/files";
@@ -254,14 +254,14 @@ impl CurseForgeSource {
 
     /// Gets addon information by numeric ID as raw JSON.
     pub async fn get_addon_by_id(&self, addon_id: &str) -> Result<serde_json::Value> {
-        info!("Looking up addon by ID: {}", addon_id);
+        debug!("Looking up addon by ID: {}", addon_id);
         let url = format!("{CURSEFORGE_API_BASE}/mods/{addon_id}");
         self.make_request_with_retry(&url).await
     }
 
     /// Gets typed addon information by numeric ID.
     pub async fn get_addon_info_by_id(&self, addon_id: &str) -> Result<AddonInfo> {
-        info!("Looking up addon info by ID: {}", addon_id);
+        debug!("Looking up addon info by ID: {}", addon_id);
         let url = format!("{CURSEFORGE_API_BASE}/mods/{addon_id}");
         let mod_data: CfMod = self.make_request_with_retry(&url).await?;
         Ok(AddonInfo {
@@ -308,7 +308,7 @@ impl CurseForgeSource {
         }
 
         let cdn_url = build_cdn_url(file_id, file_name);
-        info!("Using CDN URL for file {}: {}", file_id, cdn_url);
+        debug!("Using CDN URL for file {}: {}", file_id, cdn_url);
         Ok(cdn_url)
     }
 
@@ -643,7 +643,7 @@ impl CurseForgeSource {
             .filter_map(|id| id.parse::<u32>().ok())
             .collect();
 
-        info!(
+        debug!(
             "Batch fetching {} mods from CurseForge (channel: {})",
             mod_ids.len(),
             channel
@@ -718,7 +718,7 @@ impl CurseForgeSource {
             return Ok(Vec::new());
         }
 
-        info!(
+        debug!(
             "Batch fetching {} addon infos from CurseForge",
             mod_ids.len()
         );
@@ -760,7 +760,7 @@ impl CurseForgeSource {
             });
         }
 
-        info!(
+        debug!(
             "Sending {} fingerprints to CurseForge for matching",
             fingerprints.len()
         );
@@ -862,7 +862,7 @@ impl AddonSource for CurseForgeSource {
         let page_size = 20u32;
         let index = (page_num - 1) * page_size;
 
-        info!(
+        debug!(
             "Searching CurseForge for: {} (page {}, index {})",
             query, page_num, index
         );
@@ -912,7 +912,7 @@ impl AddonSource for CurseForgeSource {
         addon_id: &str,
         channel: ReleaseChannel,
     ) -> Result<VersionInfo> {
-        info!(
+        debug!(
             "Getting latest version for addon ID: {} (channel: {})",
             addon_id, channel
         );
@@ -985,7 +985,7 @@ impl AddonSource for CurseForgeSource {
     }
 
     async fn download(&self, download_url: &str, destination: &Path) -> Result<PathBuf> {
-        info!("Downloading from: {}", download_url);
+        debug!("Downloading from: {}", download_url);
 
         let response = self
             .client
@@ -1014,7 +1014,7 @@ impl AddonSource for CurseForgeSource {
             .unwrap_or("(not set)")
             .to_string();
 
-        info!(
+        debug!(
             "Response: status={}, content-type={}, content-length={}, content-encoding={}",
             status, content_type, content_length, content_encoding
         );
@@ -1037,7 +1037,7 @@ impl AddonSource for CurseForgeSource {
             .await
             .map_err(|e| WowctlError::Network(format!("Failed to read download: {e}")))?;
 
-        info!("Downloaded {} bytes", bytes.len());
+        debug!("Downloaded {} bytes", bytes.len());
 
         // Log first and last bytes for diagnosing corrupted/truncated downloads
         if bytes.len() >= 16 {
@@ -1076,7 +1076,7 @@ impl AddonSource for CurseForgeSource {
         file.flush().await?;
         drop(file);
 
-        info!("Downloaded to: {}", destination.display());
+        debug!("Downloaded to: {}", destination.display());
         Ok(destination.to_path_buf())
     }
 
@@ -1101,7 +1101,7 @@ impl AddonSource for CurseForgeSource {
     }
 
     async fn get_addon_by_slug(&self, slug: &str) -> Result<AddonInfo> {
-        info!("Looking up addon by slug: {}", slug);
+        debug!("Looking up addon by slug: {}", slug);
 
         let url = format!("{CURSEFORGE_API_BASE}/mods/search");
         let params = SlugSearchParams {

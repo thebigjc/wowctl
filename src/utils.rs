@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Extracts the addon slug from a CurseForge URL.
 pub fn extract_slug_from_url(url: &str) -> Result<String> {
@@ -57,7 +57,7 @@ pub fn should_use_color(config_color: bool, no_color_flag: bool) -> bool {
 
 /// Extracts a zip file and returns the list of top-level directories created.
 pub fn extract_zip(zip_path: &Path, extract_to: &Path) -> Result<Vec<String>> {
-    info!(
+    debug!(
         "Extracting {} to {}",
         zip_path.display(),
         extract_to.display()
@@ -132,7 +132,7 @@ pub fn extract_zip_to_temp(zip_path: &Path) -> Result<(PathBuf, Vec<String>)> {
 /// Falls back to recursive copy + remove when source and destination are on
 /// different filesystems (e.g. WSL tmp → Windows mount).
 pub fn move_addon_dirs(temp_dir: &Path, addon_dir: &Path, directories: &[String]) -> Result<()> {
-    info!("Moving addon directories to {}", addon_dir.display());
+    debug!("Moving addon directories to {}", addon_dir.display());
     debug!("move_addon_dirs: directories to move: {:?}", directories);
 
     for dir_name in directories {
