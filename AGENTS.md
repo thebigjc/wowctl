@@ -89,6 +89,13 @@ WoWUp ([github.com/WowUp/WowUp](https://github.com/WowUp/WowUp)) is an open-sour
 - **Test-driven development:** Write test cases before fixing a bug or implementing a feature. Make the test fail first, then change the code until the test passes. Run `cargo test` to execute the test suite.
 - **Keep AGENTS.md current:** Update this file whenever you learn something new about the project, its dependencies, APIs, or constraints. This is a living document.
 
+## Git Workflow
+
+- **No amending pushed commits.** Do not use `git commit --amend` on commits that have already been pushed. If follow-up changes are needed, make a new commit. This avoids force-pushes to shared branches.
+- **Force-push only as a last resort.** If a force-push is truly unavoidable (e.g. rebasing a local-only branch), use `--force-with-lease` and never force-push `main`.
+- **Clippy must pass before pushing.** A pre-push hook enforces `cargo clippy -- -D warnings`. Install it with: `git config core.hooksPath .githooks`. CI also runs clippy as a backstop.
+- **Resolve all clippy warnings before committing.** Run `cargo clippy -- -D warnings` locally. Use `cargo clippy --fix --allow-dirty` for auto-fixable lints.
+
 ## Testing Notes
 
 - Run tests with `cargo test`.

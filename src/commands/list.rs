@@ -45,7 +45,7 @@ pub async fn list(filter: ListFilter) -> Result<()> {
                         .released_at
                         .as_deref()
                         .map(|d| if d.len() >= 10 { &d[..10] } else { d })
-                        .map(|d| format!("  {}", d))
+                        .map(|d| format!("  {d}"))
                         .unwrap_or_default();
                     println!(
                         "  {}  {}  {}{}{}",

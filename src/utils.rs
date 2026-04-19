@@ -19,8 +19,7 @@ pub fn extract_slug_from_url(url: &str) -> Result<String> {
     }
 
     Err(WowctlError::Source(format!(
-        "Invalid CurseForge URL: {}",
-        url
+        "Invalid CurseForge URL: {url}"
     )))
 }
 
@@ -308,7 +307,7 @@ fn select_toc_file(dir_path: &Path, folder_name: &str, flavor: GameFlavor) -> Op
         return Some(p.clone());
     }
 
-    let base_name = format!("{}.toc", folder_name);
+    let base_name = format!("{folder_name}.toc");
     if let Some(p) = toc_files.iter().find(|p| {
         p.file_name()
             .and_then(OsStr::to_str)
@@ -437,21 +436,18 @@ fn parse_toc_contents(contents: &str) -> TocMetadata {
                             }
                         }
                     }
-                    "X-WoWI-ID" => {
-                        if !value.is_empty() {
+                    "X-WoWI-ID"
+                        if !value.is_empty() => {
                             meta.wowi_id = Some(value.to_string());
                         }
-                    }
-                    "X-Wago-ID" => {
-                        if !value.is_empty() {
+                    "X-Wago-ID"
+                        if !value.is_empty() => {
                             meta.wago_id = Some(value.to_string());
                         }
-                    }
-                    "X-Tukui-ProjectID" => {
-                        if !value.is_empty() {
+                    "X-Tukui-ProjectID"
+                        if !value.is_empty() => {
                             meta.tukui_id = Some(value.to_string());
                         }
-                    }
                     _ => {}
                 }
             }
@@ -605,7 +601,7 @@ pub fn backup_addon_dirs(addon_dir: &Path, directories: &[String]) -> Result<Vec
             debug!("backup_addon_dirs: {} does not exist, skipping", original.display());
             continue;
         }
-        let backup = addon_dir.join(format!("{}{}", dir_name, BACKUP_SUFFIX));
+        let backup = addon_dir.join(format!("{dir_name}{BACKUP_SUFFIX}"));
         if backup.exists() {
             debug!("backup_addon_dirs: removing old backup {}", backup.display());
             fs::remove_dir_all(&backup).map_err(|e| {
@@ -629,7 +625,7 @@ pub fn backup_addon_dirs(addon_dir: &Path, directories: &[String]) -> Result<Vec
 pub fn restore_addon_dirs(addon_dir: &Path, backed_up_dirs: &[String]) {
     for dir_name in backed_up_dirs {
         let original = addon_dir.join(dir_name);
-        let backup = addon_dir.join(format!("{}{}", dir_name, BACKUP_SUFFIX));
+        let backup = addon_dir.join(format!("{dir_name}{BACKUP_SUFFIX}"));
 
         if original.exists()
             && let Err(e) = fs::remove_dir_all(&original)
@@ -659,7 +655,7 @@ pub fn restore_addon_dirs(addon_dir: &Path, backed_up_dirs: &[String]) {
 /// Removes `-wowctl-bak` backup directories after a successful update.
 pub fn cleanup_backup_dirs(addon_dir: &Path, backed_up_dirs: &[String]) {
     for dir_name in backed_up_dirs {
-        let backup = addon_dir.join(format!("{}{}", dir_name, BACKUP_SUFFIX));
+        let backup = addon_dir.join(format!("{dir_name}{BACKUP_SUFFIX}"));
         if backup.exists() {
             if let Err(e) = fs::remove_dir_all(&backup) {
                 warn!("Failed to clean up backup {}: {}", backup.display(), e);

@@ -33,7 +33,7 @@ const INITIAL_BACKOFF_MS: u64 = 1000;
 fn build_cdn_url(file_id: u32, file_name: &str) -> String {
     let part1 = file_id / 1000;
     let part2 = file_id % 1000;
-    format!("{}/{}/{}/{}", CURSEFORGE_CDN_BASE, part1, part2, file_name)
+    format!("{CURSEFORGE_CDN_BASE}/{part1}/{part2}/{file_name}")
 }
 
 /// CurseForge addon source implementation.
@@ -243,7 +243,7 @@ impl CurseForgeSource {
             .user_agent(format!("wowctl/{}", env!("WOWCTL_VERSION")))
             .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
             .build()
-            .map_err(|e| WowctlError::Network(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| WowctlError::Network(format!("Failed to create HTTP client: {e}")))?;
 
         Ok(Self {
             client,
@@ -255,14 +255,14 @@ impl CurseForgeSource {
     /// Gets addon information by numeric ID as raw JSON.
     pub async fn get_addon_by_id(&self, addon_id: &str) -> Result<serde_json::Value> {
         info!("Looking up addon by ID: {}", addon_id);
-        let url = format!("{}/mods/{}", CURSEFORGE_API_BASE, addon_id);
+        let url = format!("{CURSEFORGE_API_BASE}/mods/{addon_id}");
         self.make_request_with_retry(&url).await
     }
 
     /// Gets typed addon information by numeric ID.
     pub async fn get_addon_info_by_id(&self, addon_id: &str) -> Result<AddonInfo> {
         info!("Looking up addon info by ID: {}", addon_id);
-        let url = format!("{}/mods/{}", CURSEFORGE_API_BASE, addon_id);
+        let url = format!("{CURSEFORGE_API_BASE}/mods/{addon_id}");
         let mod_data: CfMod = self.make_request_with_retry(&url).await?;
         Ok(AddonInfo {
             id: mod_data.id.to_string(),
@@ -286,8 +286,7 @@ impl CurseForgeSource {
         file_name: &str,
     ) -> Result<String> {
         let url = format!(
-            "{}/mods/{}/files/{}/download-url",
-            CURSEFORGE_API_BASE, addon_id, file_id
+            "{CURSEFORGE_API_BASE}/mods/{addon_id}/files/{file_id}/download-url"
         );
         match self.make_request_with_retry::<String>(&url).await {
             Ok(download_url) if !download_url.is_empty() => {
@@ -373,7 +372,7 @@ impl CurseForgeSource {
 
                     if status.is_success() {
                         let response_data: ApiResponse<T> = response.json().await.map_err(|e| {
-                            WowctlError::Source(format!("Failed to parse API response: {}", e))
+                            WowctlError::Source(format!("Failed to parse API response: {e}"))
                         })?;
                         return Ok(response_data.data);
                     } else if status.as_u16() == 429 {
@@ -402,8 +401,7 @@ impl CurseForgeSource {
                             .await
                             .unwrap_or_else(|_| "Unknown error".to_string());
                         return Err(WowctlError::Source(format!(
-                            "CurseForge API error ({}): {}",
-                            status, error_text
+                            "CurseForge API error ({status}): {error_text}"
                         )));
                     }
                 }
@@ -411,8 +409,7 @@ impl CurseForgeSource {
                     warn!("Network error: {}", e);
                     if attempts >= MAX_RETRIES {
                         return Err(WowctlError::Network(format!(
-                            "Failed to connect to CurseForge API after {} attempts: {}",
-                            MAX_RETRIES, e
+                            "Failed to connect to CurseForge API after {MAX_RETRIES} attempts: {e}"
                         )));
                     }
                 }
@@ -466,7 +463,7 @@ impl CurseForgeSource {
                     if status.is_success() {
                         let response_data: PaginatedApiResponse<T> =
                             response.json().await.map_err(|e| {
-                                WowctlError::Source(format!("Failed to parse API response: {}", e))
+                                WowctlError::Source(format!("Failed to parse API response: {e}"))
                             })?;
                         return Ok((response_data.data, response_data.pagination));
                     } else if status.as_u16() == 429 {
@@ -495,8 +492,7 @@ impl CurseForgeSource {
                             .await
                             .unwrap_or_else(|_| "Unknown error".to_string());
                         return Err(WowctlError::Source(format!(
-                            "CurseForge API error ({}): {}",
-                            status, error_text
+                            "CurseForge API error ({status}): {error_text}"
                         )));
                     }
                 }
@@ -504,8 +500,7 @@ impl CurseForgeSource {
                     warn!("Network error: {}", e);
                     if attempts >= MAX_RETRIES {
                         return Err(WowctlError::Network(format!(
-                            "Failed to connect to CurseForge API after {} attempts: {}",
-                            MAX_RETRIES, e
+                            "Failed to connect to CurseForge API after {MAX_RETRIES} attempts: {e}"
                         )));
                     }
                 }
@@ -584,7 +579,7 @@ impl CurseForgeSource {
 
                     if status.is_success() {
                         let response_data: ApiResponse<T> = response.json().await.map_err(|e| {
-                            WowctlError::Source(format!("Failed to parse API response: {}", e))
+                            WowctlError::Source(format!("Failed to parse API response: {e}"))
                         })?;
                         return Ok(response_data.data);
                     } else if status.as_u16() == 429 {
@@ -613,8 +608,7 @@ impl CurseForgeSource {
                             .await
                             .unwrap_or_else(|_| "Unknown error".to_string());
                         return Err(WowctlError::Source(format!(
-                            "CurseForge API error ({}): {}",
-                            status, error_text
+                            "CurseForge API error ({status}): {error_text}"
                         )));
                     }
                 }
@@ -622,8 +616,7 @@ impl CurseForgeSource {
                     warn!("Network error: {}", e);
                     if attempts >= MAX_RETRIES {
                         return Err(WowctlError::Network(format!(
-                            "Failed to connect to CurseForge API after {} attempts: {}",
-                            MAX_RETRIES, e
+                            "Failed to connect to CurseForge API after {MAX_RETRIES} attempts: {e}"
                         )));
                     }
                 }
@@ -655,7 +648,7 @@ impl CurseForgeSource {
             mod_ids.len(),
             channel
         );
-        let url = format!("{}/mods", CURSEFORGE_API_BASE);
+        let url = format!("{CURSEFORGE_API_BASE}/mods");
         let body = BatchModsRequest { mod_ids };
         let mods: Vec<CfMod> = self.make_post_request_with_retry(&url, &body).await?;
 
@@ -729,7 +722,7 @@ impl CurseForgeSource {
             "Batch fetching {} addon infos from CurseForge",
             mod_ids.len()
         );
-        let url = format!("{}/mods", CURSEFORGE_API_BASE);
+        let url = format!("{CURSEFORGE_API_BASE}/mods");
         let body = BatchModsRequest { mod_ids };
         let mods: Vec<CfMod> = self.make_post_request_with_retry(&url, &body).await?;
 
@@ -771,7 +764,7 @@ impl CurseForgeSource {
             "Sending {} fingerprints to CurseForge for matching",
             fingerprints.len()
         );
-        let url = format!("{}/fingerprints", CURSEFORGE_API_BASE);
+        let url = format!("{CURSEFORGE_API_BASE}/fingerprints");
         let body = FingerprintsRequest {
             fingerprints: fingerprints.to_vec(),
         };
@@ -874,7 +867,7 @@ impl AddonSource for CurseForgeSource {
             query, page_num, index
         );
 
-        let url = format!("{}/mods/search", CURSEFORGE_API_BASE);
+        let url = format!("{CURSEFORGE_API_BASE}/mods/search");
         let params = SearchParams {
             game_id: WOW_GAME_ID,
             class_id: WOW_ADDONS_CLASS_ID,
@@ -924,7 +917,7 @@ impl AddonSource for CurseForgeSource {
             addon_id, channel
         );
 
-        let url = format!("{}/mods/{}/files", CURSEFORGE_API_BASE, addon_id);
+        let url = format!("{CURSEFORGE_API_BASE}/mods/{addon_id}/files");
         let params = [("gameVersionTypeId", WOW_RETAIL_VERSION_TYPE_ID.to_string())];
         let files: Vec<CfFile> = self.make_request_with_retry_params(&url, &params).await?;
 
@@ -934,8 +927,7 @@ impl AddonSource for CurseForgeSource {
             .max_by_key(|f| f.file_date.clone())
             .ok_or_else(|| {
                 WowctlError::Source(format!(
-                    "No compatible {} version found for WoW Retail",
-                    channel
+                    "No compatible {channel} version found for WoW Retail"
                 ))
             })?;
 
@@ -1000,7 +992,7 @@ impl AddonSource for CurseForgeSource {
             .get(download_url)
             .send()
             .await
-            .map_err(|e| WowctlError::Network(format!("Failed to download addon: {}", e)))?;
+            .map_err(|e| WowctlError::Network(format!("Failed to download addon: {e}")))?;
 
         let status = response.status();
         let content_type = response
@@ -1029,23 +1021,21 @@ impl AddonSource for CurseForgeSource {
 
         if !status.is_success() {
             return Err(WowctlError::Network(format!(
-                "Download failed with status: {}",
-                status
+                "Download failed with status: {status}"
             )));
         }
 
         // Reject HTML error pages that CDNs sometimes serve with 200 OK
         if content_type.contains("text/html") || content_type.contains("text/plain") {
             return Err(WowctlError::Network(format!(
-                "CDN returned {} instead of a zip file — the download URL may be invalid: {}",
-                content_type, download_url
+                "CDN returned {content_type} instead of a zip file — the download URL may be invalid: {download_url}"
             )));
         }
 
         let bytes = response
             .bytes()
             .await
-            .map_err(|e| WowctlError::Network(format!("Failed to read download: {}", e)))?;
+            .map_err(|e| WowctlError::Network(format!("Failed to read download: {e}")))?;
 
         info!("Downloaded {} bytes", bytes.len());
 
@@ -1057,17 +1047,16 @@ impl AddonSource for CurseForgeSource {
                 &bytes[bytes.len() - 16..]
             );
         }
-        if bytes.len() < 1024 {
-            // If the body is suspiciously small, log it as text for debugging
-            info!(
-                "Response body (small, {} bytes): {:?}",
-                bytes.len(),
-                String::from_utf8_lossy(&bytes)
-            );
-        }
-
         // Validate ZIP magic bytes (PK\x03\x04) before writing to disk
         if bytes.len() < 4 || &bytes[..4] != b"PK\x03\x04" {
+            if bytes.len() < 1024 {
+                // Dump small non-zip response body for debugging (likely an error page)
+                debug!(
+                    "Response body for invalid zip (small, {} bytes): {:?}",
+                    bytes.len(),
+                    String::from_utf8_lossy(&bytes)
+                );
+            }
             return Err(WowctlError::Extraction(format!(
                 "Downloaded file is not a valid zip archive (bad magic bytes). \
                  Got {} bytes, first 4: {:02x?}. \
@@ -1085,6 +1074,7 @@ impl AddonSource for CurseForgeSource {
         let mut file = tokio::fs::File::create(destination).await?;
         file.write_all(&bytes).await?;
         file.flush().await?;
+        drop(file);
 
         info!("Downloaded to: {}", destination.display());
         Ok(destination.to_path_buf())
@@ -1113,7 +1103,7 @@ impl AddonSource for CurseForgeSource {
     async fn get_addon_by_slug(&self, slug: &str) -> Result<AddonInfo> {
         info!("Looking up addon by slug: {}", slug);
 
-        let url = format!("{}/mods/search", CURSEFORGE_API_BASE);
+        let url = format!("{CURSEFORGE_API_BASE}/mods/search");
         let params = SlugSearchParams {
             game_id: WOW_GAME_ID,
             slug: slug.to_string(),
@@ -1124,7 +1114,7 @@ impl AddonSource for CurseForgeSource {
         let mod_data = mods
             .into_iter()
             .find(|m| m.slug == slug)
-            .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{}' not found", slug)))?;
+            .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{slug}' not found")))?;
 
         Ok(AddonInfo {
             id: mod_data.id.to_string(),

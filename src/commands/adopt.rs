@@ -57,8 +57,7 @@ async fn adopt_single(
 
     if registry.find_by_directory(folder).is_some() {
         return Err(WowctlError::Config(format!(
-            "'{}' is already managed by wowctl",
-            folder
+            "'{folder}' is already managed by wowctl"
         )));
     }
 
@@ -190,8 +189,7 @@ async fn search_and_select(
 
     if result.addons.is_empty() {
         return Err(WowctlError::AddonNotFound(format!(
-            "No CurseForge results for '{}'. Use --slug to specify manually.",
-            folder
+            "No CurseForge results for '{folder}'. Use --slug to specify manually."
         )));
     }
 
@@ -203,11 +201,11 @@ async fn search_and_select(
         .collect();
 
     let selection = Select::new()
-        .with_prompt(format!("Select the addon for '{}'", folder))
+        .with_prompt(format!("Select the addon for '{folder}'"))
         .items(&display_items)
         .default(0)
         .interact()
-        .map_err(|e| WowctlError::Config(format!("Selection failed: {}", e)))?;
+        .map_err(|e| WowctlError::Config(format!("Selection failed: {e}")))?;
 
     Ok(result
         .addons
@@ -488,7 +486,7 @@ async fn adopt_all(
     registry.save()?;
     println!(
         "{}",
-        format!("Adopted {} addon(s) successfully.", adopted_count)
+        format!("Adopted {adopted_count} addon(s) successfully.")
             .color_green()
             .color_bold()
     );

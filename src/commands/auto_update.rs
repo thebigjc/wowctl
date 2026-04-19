@@ -7,7 +7,7 @@ pub async fn enable(addon: &str) -> Result<()> {
 
     let installed = registry
         .get(addon)
-        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{}' is not installed", addon)))?;
+        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{addon}' is not installed")))?;
 
     if installed.is_auto_update() {
         println!("{} already has auto-update enabled.", addon.color_cyan());
@@ -29,7 +29,7 @@ pub async fn disable(addon: &str) -> Result<()> {
 
     let installed = registry
         .get(addon)
-        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{}' is not installed", addon)))?;
+        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{addon}' is not installed")))?;
 
     if !installed.is_auto_update() {
         println!("{} does not have auto-update enabled.", addon.color_cyan());

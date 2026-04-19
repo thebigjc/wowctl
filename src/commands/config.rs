@@ -20,7 +20,7 @@ pub async fn init() -> Result<()> {
     let api_key: String = Input::new()
         .with_prompt("Enter your CurseForge API key")
         .interact_text()
-        .map_err(|e| WowctlError::Config(format!("Failed to read input: {}", e)))?;
+        .map_err(|e| WowctlError::Config(format!("Failed to read input: {e}")))?;
 
     println!();
     println!("{}", "Verifying API key...".color_dimmed());
@@ -51,7 +51,7 @@ pub async fn init() -> Result<()> {
                 .with_prompt("Use this directory?")
                 .default(true)
                 .interact()
-                .map_err(|e| WowctlError::Config(format!("Failed to read input: {}", e)))?;
+                .map_err(|e| WowctlError::Config(format!("Failed to read input: {e}")))?;
 
             if use_detected {
                 config.addon_dir = Some(detected_path);
@@ -59,7 +59,7 @@ pub async fn init() -> Result<()> {
                 let custom_path: String = Input::new()
                     .with_prompt("Enter addon directory path")
                     .interact_text()
-                    .map_err(|e| WowctlError::Config(format!("Failed to read input: {}", e)))?;
+                    .map_err(|e| WowctlError::Config(format!("Failed to read input: {e}")))?;
                 config.addon_dir = Some(PathBuf::from(custom_path));
             }
         }
@@ -71,7 +71,7 @@ pub async fn init() -> Result<()> {
             let custom_path: String = Input::new()
                 .with_prompt("Enter addon directory path")
                 .interact_text()
-                .map_err(|e| WowctlError::Config(format!("Failed to read input: {}", e)))?;
+                .map_err(|e| WowctlError::Config(format!("Failed to read input: {e}")))?;
             config.addon_dir = Some(PathBuf::from(custom_path));
         }
     }
@@ -209,23 +209,21 @@ pub async fn set(key: &str, value: &str) -> Result<()> {
         "color" => {
             let color_value = value.parse::<bool>().map_err(|_| {
                 WowctlError::Config(format!(
-                    "Invalid boolean value: '{}'. Use 'true' or 'false'",
-                    value
+                    "Invalid boolean value: '{value}'. Use 'true' or 'false'"
                 ))
             })?;
             config.color = color_value;
-            println!("Set color output to: {}", color_value);
+            println!("Set color output to: {color_value}");
         }
         "default_release_channel" | "channel" => {
             let channel: crate::addon::ReleaseChannel =
                 value.parse().map_err(|e: String| WowctlError::Config(e))?;
             config.default_release_channel = Some(channel);
-            println!("Set default release channel to: {}", channel);
+            println!("Set default release channel to: {channel}");
         }
         _ => {
             return Err(WowctlError::Config(format!(
-                "Unknown configuration key: '{}'. Valid keys: addon_dir, curseforge_api_key, color, default_release_channel",
-                key
+                "Unknown configuration key: '{key}'. Valid keys: addon_dir, curseforge_api_key, color, default_release_channel"
             )));
         }
     }
@@ -243,5 +241,5 @@ fn mask_api_key(key: &str) -> String {
 
     let prefix = &key[..4];
     let suffix = &key[key.len() - 4..];
-    format!("{}...{}", prefix, suffix)
+    format!("{prefix}...{suffix}")
 }

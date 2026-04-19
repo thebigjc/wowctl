@@ -7,7 +7,7 @@ pub async fn info(addon: &str) -> Result<()> {
 
     let installed_addon = registry
         .get(addon)
-        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{}' is not installed", addon)))?;
+        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{addon}' is not installed")))?;
 
     println!("{}", installed_addon.name.color_bold());
     println!(
@@ -36,7 +36,7 @@ pub async fn info(addon: &str) -> Result<()> {
     if !installed_addon.directories.is_empty() {
         println!("  {}:", "Directories".color_bold());
         for dir in &installed_addon.directories {
-            println!("    - {}", dir);
+            println!("    - {dir}");
         }
     }
 

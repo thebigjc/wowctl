@@ -66,14 +66,14 @@ fn format_age(months: u32) -> String {
     } else if months == 1 {
         "1 month".to_string()
     } else if months < 24 {
-        format!("{} months", months)
+        format!("{months} months")
     } else {
         let years = months / 12;
         let rem = months % 12;
         if rem == 0 {
-            format!("{} years", years)
+            format!("{years} years")
         } else {
-            format!("{} years, {} months", years, rem)
+            format!("{years} years, {rem} months")
         }
     }
 }
@@ -126,11 +126,8 @@ fn find_stale_addons(
             .all(|parent| stale_slugs.contains(parent))
     });
 
-    // Sort oldest first.
-    stale.sort_by(|a, b| b.1.cmp(&a.1));
-
-    stale
-        .sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.slug.cmp(&b.0.slug)));
+    // Sort oldest first, break ties by slug.
+    stale.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.slug.cmp(&b.0.slug)));
 
     (stale, unknown)
 }
@@ -146,8 +143,7 @@ pub async fn stale(threshold_months: u32) -> Result<()> {
         println!(
             "{}",
             format!(
-                "No stale addons found (threshold: {} months).",
-                threshold_months
+                "No stale addons found (threshold: {threshold_months} months)."
             )
             .color_green()
         );
@@ -158,8 +154,7 @@ pub async fn stale(threshold_months: u32) -> Result<()> {
         println!(
             "{}",
             format!(
-                "Addons with no update in {} months or more:",
-                threshold_months
+                "Addons with no update in {threshold_months} months or more:"
             )
             .color_bold()
         );
@@ -260,7 +255,7 @@ mod tests {
         let new_y = (total_months - 1) / 12;
         let new_m = ((total_months - 1) % 12 + 1) as u32;
         let new_d = d.min(28); // Safe day to avoid month overflow
-        format!("{:04}-{:02}-{:02}T00:00:00Z", new_y, new_m, new_d)
+        format!("{new_y:04}-{new_m:02}-{new_d:02}T00:00:00Z")
     }
 
     // --- Date parsing tests ---

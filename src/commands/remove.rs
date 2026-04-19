@@ -14,7 +14,7 @@ pub fn remove_addon_from_registry(
 ) -> Result<Vec<String>> {
     let installed_addon = registry
         .get(slug)
-        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{}' is not installed", slug)))?
+        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{slug}' is not installed")))?
         .clone();
 
     for dir_name in &installed_addon.directories {
@@ -55,7 +55,7 @@ pub fn prompt_remove_orphans(
         .with_prompt("Remove orphaned dependencies?")
         .default(true)
         .interact()
-        .map_err(|e| WowctlError::Config(format!("Failed to read input: {}", e)))?;
+        .map_err(|e| WowctlError::Config(format!("Failed to read input: {e}")))?;
 
     if should_remove {
         for orphan_slug in orphans {
@@ -82,7 +82,7 @@ pub async fn remove(addon: &str) -> Result<()> {
 
     let installed_addon = registry
         .get(addon)
-        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{}' is not installed", addon)))?;
+        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{addon}' is not installed")))?;
     let name = installed_addon.name.clone();
 
     println!("Removing {}...", name.color_cyan());

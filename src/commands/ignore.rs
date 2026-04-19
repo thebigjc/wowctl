@@ -7,7 +7,7 @@ pub async fn ignore(addon: &str) -> Result<()> {
 
     let installed = registry
         .get(addon)
-        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{}' is not installed", addon)))?;
+        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{addon}' is not installed")))?;
 
     if installed.is_ignored() {
         println!("{} is already ignored.", addon.color_cyan());
@@ -32,7 +32,7 @@ pub async fn unignore(addon: &str) -> Result<()> {
 
     let installed = registry
         .get(addon)
-        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{}' is not installed", addon)))?;
+        .ok_or_else(|| WowctlError::AddonNotFound(format!("Addon '{addon}' is not installed")))?;
 
     if !installed.is_ignored() {
         println!("{} is not ignored.", addon.color_cyan());

@@ -124,8 +124,7 @@ impl FromStr for ReleaseChannel {
             "beta" => Ok(Self::Beta),
             "alpha" => Ok(Self::Alpha),
             _ => Err(format!(
-                "unknown release channel '{}' (expected: stable, beta, alpha)",
-                s
+                "unknown release channel '{s}' (expected: stable, beta, alpha)"
             )),
         }
     }
