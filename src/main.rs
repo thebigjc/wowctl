@@ -14,8 +14,11 @@ struct Cli {
     #[arg(long, global = true, help = "Disable colored output")]
     no_color: bool,
 
-    #[arg(long, global = true, help = "Enable verbose/debug logging")]
+    #[arg(long, global = true, help = "Enable verbose logging (info level)")]
     verbose: bool,
+
+    #[arg(long, global = true, help = "Enable debug logging (debug level)")]
+    debug: bool,
 
     #[arg(
         long,
@@ -151,13 +154,17 @@ enum ConfigAction {
     },
 }
 
-fn init_logging(verbose: bool) {
-    let filter = if verbose {
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("wowctl=debug,info"))
+fn init_logging(verbose: bool, debug: bool) {
+    let default_filter = if debug {
+        "wowctl=debug"
+    } else if verbose {
+        "wowctl=info"
     } else {
-        EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("wowctl=info,warn,error"))
+        "wowctl=warn"
     };
+
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(false))
@@ -169,7 +176,7 @@ fn init_logging(verbose: bool) {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    init_logging(cli.verbose);
+    init_logging(cli.verbose, cli.debug);
 
     let use_color = !cli.no_color && std::env::var("NO_COLOR").is_err();
     wowctl::colors::set_colors_enabled(use_color);
@@ -185,7 +192,7 @@ async fn main() -> Result<()> {
         tracing::debug!("Addon directory override: {}", addon_dir);
     }
 
-    tracing::debug!("wowctl starting with verbose logging enabled");
+    tracing::debug!("wowctl starting with debug logging enabled");
     tracing::info!("wowctl version {}", env!("WOWCTL_VERSION"));
 
     match cli.command {
