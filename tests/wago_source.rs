@@ -1,7 +1,7 @@
 //! HTTP-boundary tests for the Wago client against a local wiremock server.
-//! The canned JSON pins the API contract we assume (derived from WowUp's
-//! wago-addon-provider.ts); tests/wago_live.rs validates it against the
-//! real API.
+//! The canned JSON mirrors the real live API contract (validated 2026-08-16
+//! against ClassCodex, id rNkynwKa); tests/wago_live.rs exercises it against
+//! the real API end-to-end.
 
 use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -16,35 +16,67 @@ fn source(server: &MockServer) -> WagoSource {
     WagoSource::with_base_url(KEY.to_string(), server.uri()).unwrap()
 }
 
-fn stable_release(label: &str, ts: u64, url: &str) -> serde_json::Value {
-    serde_json::json!({
+/// Real search/detail release shape: `download_link` and
+/// `supported_retail_patch`. Search release tiers do carry
+/// `logical_timestamp` on the wire (the model no longer reads it); detail
+/// release tiers never have it, so it's an optional argument.
+fn stable_release(
+    label: &str,
+    created_at: &str,
+    url: &str,
+    logical_timestamp: Option<u64>,
+) -> serde_json::Value {
+    let mut v = serde_json::json!({
         "label": label,
         "download_link": url,
-        "created_at": "2026-08-01T00:00:00Z",
-        "logical_timestamp": ts,
+        "created_at": created_at,
         "stability": "stable",
         "supported_retail_patch": "11.2.0"
+    });
+    if let Some(ts) = logical_timestamp {
+        v["logical_timestamp"] = serde_json::json!(ts);
+    }
+    v
+}
+
+/// Real `_recents` batch release shape: `link` (not `download_link`) and
+/// `patch` (not `supported_retail_patch`), plus an `id` field we ignore, no
+/// `logical_timestamp`.
+fn recents_release(label: &str, created_at: &str, url: &str) -> serde_json::Value {
+    serde_json::json!({
+        "label": label,
+        "link": url,
+        "created_at": created_at,
+        "id": "some-release-id",
+        "patch": "11.2.0",
+        "supported_patches": ["11.2.0"]
     })
 }
 
 fn search_body(server_uri: &str) -> serde_json::Value {
+    // Real search items carry no `slug` field; `website_url` is the
+    // fallback the client derives the slug from.
     serde_json::json!({
         "data": [
             {
                 "id": "rNkynwKa",
-                "slug": "classcodex",
                 "display_name": "ClassCodex",
                 "summary": "Class guide addon",
                 "download_count": 1234,
                 "website_url": "https://addons.wago.io/addons/classcodex",
                 "releases": {
-                    "stable": stable_release("1.2.0", 100, &format!("{server_uri}/dl/classcodex"))
+                    "stable": stable_release(
+                        "1.2.0",
+                        "2026-08-06T13:42:41.000000Z",
+                        &format!("{server_uri}/dl/classcodex"),
+                        Some(1755100000000000),
+                    )
                 }
             },
             {
                 "id": "hidden01",
-                "slug": "hidden-addon",
                 "display_name": "HiddenAddon",
+                "website_url": "https://addons.wago.io/addons/hidden-addon",
                 "is_hidden_from_external": true,
                 "releases": {}
             }
@@ -53,6 +85,10 @@ fn search_body(server_uri: &str) -> serde_json::Value {
 }
 
 fn detail_body(server_uri: &str) -> serde_json::Value {
+    // Real detail responses key the releases object `recent_release`
+    // (singular) and omit `is_hidden_from_external` (hidden addons are
+    // filtered server-side); it's kept out of the base fixture here and
+    // added explicitly by the test that exercises defensive filtering.
     serde_json::json!({
         "id": "rNkynwKa",
         "slug": "classcodex",
@@ -60,10 +96,19 @@ fn detail_body(server_uri: &str) -> serde_json::Value {
         "summary": "Class guide addon",
         "download_count": 1234,
         "website_url": "https://addons.wago.io/addons/classcodex",
-        "is_hidden_from_external": false,
-        "recent_releases": {
-            "stable": stable_release("1.2.0", 1755100000000000, &format!("{server_uri}/dl/classcodex")),
-            "beta": stable_release("1.3.0-beta", 1755200000000000, &format!("{server_uri}/dl/classcodex-beta"))
+        "recent_release": {
+            "stable": stable_release(
+                "1.2.0",
+                "2026-08-06T13:42:41.000000Z",
+                &format!("{server_uri}/dl/classcodex"),
+                None,
+            ),
+            "beta": stable_release(
+                "1.3.0-beta",
+                "2026-08-07T13:42:41.000000Z",
+                &format!("{server_uri}/dl/classcodex-beta"),
+                None,
+            )
         }
     })
 }
@@ -107,7 +152,10 @@ async fn get_latest_version_stable_channel() {
 
     assert_eq!(v.version, "1.2.0");
     assert_eq!(v.file_id, None);
-    assert_eq!(v.external_release_id, Some("1755100000000000".to_string()));
+    assert_eq!(
+        v.external_release_id,
+        Some("2026-08-06T13:42:41.000000Z".to_string())
+    );
     assert!(v.download_url.ends_with("/dl/classcodex"));
     assert!(v.dependencies.is_empty());
 }
@@ -234,7 +282,11 @@ async fn recents_batch_maps_to_version_checks() {
                 "rNkynwKa": {
                     "id": "rNkynwKa",
                     "recent_releases": {
-                        "stable": stable_release("1.3.0", 1755300000000000u64, "https://example.com/1.3.0.zip")
+                        "stable": recents_release(
+                            "1.3.0",
+                            "2026-08-10T00:00:00.000000Z",
+                            "https://example.com/1.3.0.zip",
+                        )
                     }
                 }
             }
@@ -250,7 +302,10 @@ async fn recents_batch_maps_to_version_checks() {
     let check = checks.get("rNkynwKa").unwrap();
     assert_eq!(check.version, "1.3.0");
     assert_eq!(check.file_id, None);
-    assert_eq!(check.external_release_id, Some("1755300000000000".to_string()));
+    assert_eq!(
+        check.external_release_id,
+        Some("2026-08-10T00:00:00.000000Z".to_string())
+    );
 }
 
 #[tokio::test]

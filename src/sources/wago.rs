@@ -35,6 +35,9 @@ struct WagoSearchItem {
     download_count: Option<f64>,
     #[serde(default)]
     website_url: Option<String>,
+    /// Live API omits this field entirely (hidden addons are filtered
+    /// server-side); kept for defensive client-side filtering if it ever
+    /// reappears.
     #[serde(default)]
     is_hidden_from_external: bool,
     /// Wire-format documentation field; search results don't carry the
@@ -58,9 +61,12 @@ struct WagoAddonDetail {
     #[serde(default)]
     #[allow(dead_code)]
     website_url: Option<String>,
+    /// Live API omits this field entirely (hidden addons are filtered
+    /// server-side); kept for defensive client-side filtering if it ever
+    /// reappears.
     #[serde(default)]
     is_hidden_from_external: bool,
-    #[serde(default)]
+    #[serde(rename = "recent_release", default)]
     recent_releases: WagoReleases,
 }
 
@@ -78,19 +84,23 @@ struct WagoReleases {
 #[derive(Debug, Clone, Deserialize)]
 struct WagoRelease {
     label: String,
-    #[serde(default)]
+    /// Detail/search responses use `download_link`; `_recents` batch
+    /// responses use `link` for the same thing.
+    #[serde(alias = "link", default)]
     download_link: Option<String>,
+    /// Byte-identical across detail/recents/search for the same release;
+    /// our release-identity field (`external_release_id`). No numeric
+    /// `logical_timestamp` or `id` on detail/recents.
     #[serde(default)]
     created_at: Option<String>,
-    /// Wago's monotonically-increasing release marker; our external_release_id.
-    #[serde(default)]
-    logical_timestamp: Option<u64>,
     /// Wire-format documentation field; we don't branch on it (releases are
     /// already keyed by stability tier).
     #[serde(default)]
     #[allow(dead_code)]
     stability: Option<String>,
-    #[serde(default)]
+    /// Detail/search responses use `supported_retail_patch`; `_recents`
+    /// batch responses use `patch` for the same thing.
+    #[serde(alias = "patch", default)]
     supported_retail_patch: Option<String>,
 }
 
@@ -127,7 +137,8 @@ fn stability_param(channel: ReleaseChannel) -> &'static str {
 }
 
 /// Picks the newest release the channel allows (stable ⊆ beta ⊆ alpha),
-/// newest judged by logical_timestamp.
+/// newest judged by created_at (fixed-width ISO-8601 UTC, so lexicographic
+/// order equals chronological order).
 fn select_release(releases: &WagoReleases, channel: ReleaseChannel) -> Option<&WagoRelease> {
     let mut candidates: Vec<&WagoRelease> = Vec::new();
     if let Some(r) = &releases.stable {
@@ -145,7 +156,7 @@ fn select_release(releases: &WagoReleases, channel: ReleaseChannel) -> Option<&W
     }
     candidates
         .into_iter()
-        .max_by_key(|r| r.logical_timestamp.unwrap_or(0))
+        .max_by_key(|r| r.created_at.as_deref().unwrap_or(""))
 }
 
 /// Resolves an item's Slug: explicit field first, else the last path segment
@@ -181,7 +192,7 @@ fn to_version_info(release: &WagoRelease, file_name: String) -> Result<VersionIn
     })?;
     Ok(VersionInfo {
         file_id: None,
-        external_release_id: release.logical_timestamp.map(|t| t.to_string()),
+        external_release_id: release.created_at.clone(),
         version: release.label.clone(),
         display_name: release.label.clone(),
         download_url,
@@ -484,7 +495,7 @@ impl AddonSource for WagoSource {
                     BatchVersionCheck {
                         addon_id: id.clone(),
                         file_id: None,
-                        external_release_id: release.logical_timestamp.map(|t| t.to_string()),
+                        external_release_id: release.created_at.clone(),
                         version: release.label.clone(),
                         display_name: release.label.clone(),
                         released_at: release.created_at.clone().unwrap_or_default(),
@@ -505,12 +516,11 @@ impl AddonSource for WagoSource {
 mod tests {
     use super::*;
 
-    fn release(label: &str, ts: u64) -> WagoRelease {
+    fn release(label: &str, created_at: &str) -> WagoRelease {
         WagoRelease {
             label: label.to_string(),
             download_link: Some(format!("https://example.com/{label}.zip")),
-            created_at: Some("2026-08-01T00:00:00Z".to_string()),
-            logical_timestamp: Some(ts),
+            created_at: Some(created_at.to_string()),
             stability: None,
             supported_retail_patch: None,
         }
@@ -519,9 +529,9 @@ mod tests {
     #[test]
     fn stable_channel_only_sees_stable() {
         let releases = WagoReleases {
-            stable: Some(release("1.0", 100)),
-            beta: Some(release("2.0-beta", 200)),
-            alpha: Some(release("3.0-alpha", 300)),
+            stable: Some(release("1.0", "2026-08-01T00:00:00.000000Z")),
+            beta: Some(release("2.0-beta", "2026-08-02T00:00:00.000000Z")),
+            alpha: Some(release("3.0-alpha", "2026-08-03T00:00:00.000000Z")),
         };
         let picked = select_release(&releases, ReleaseChannel::Stable).unwrap();
         assert_eq!(picked.label, "1.0");
@@ -530,9 +540,9 @@ mod tests {
     #[test]
     fn beta_channel_picks_newest_of_stable_and_beta() {
         let releases = WagoReleases {
-            stable: Some(release("1.0", 100)),
-            beta: Some(release("2.0-beta", 200)),
-            alpha: Some(release("3.0-alpha", 300)),
+            stable: Some(release("1.0", "2026-08-01T00:00:00.000000Z")),
+            beta: Some(release("2.0-beta", "2026-08-02T00:00:00.000000Z")),
+            alpha: Some(release("3.0-alpha", "2026-08-03T00:00:00.000000Z")),
         };
         let picked = select_release(&releases, ReleaseChannel::Beta).unwrap();
         assert_eq!(picked.label, "2.0-beta");
@@ -541,8 +551,8 @@ mod tests {
     #[test]
     fn beta_channel_prefers_newer_stable() {
         let releases = WagoReleases {
-            stable: Some(release("2.1", 400)),
-            beta: Some(release("2.0-beta", 200)),
+            stable: Some(release("2.1", "2026-08-04T00:00:00.000000Z")),
+            beta: Some(release("2.0-beta", "2026-08-02T00:00:00.000000Z")),
             alpha: None,
         };
         let picked = select_release(&releases, ReleaseChannel::Beta).unwrap();
@@ -554,7 +564,7 @@ mod tests {
         let releases = WagoReleases {
             stable: None,
             beta: None,
-            alpha: Some(release("3.0-alpha", 300)),
+            alpha: Some(release("3.0-alpha", "2026-08-03T00:00:00.000000Z")),
         };
         let picked = select_release(&releases, ReleaseChannel::Alpha).unwrap();
         assert_eq!(picked.label, "3.0-alpha");
@@ -564,7 +574,7 @@ mod tests {
     fn no_eligible_release_returns_none() {
         let releases = WagoReleases {
             stable: None,
-            beta: Some(release("2.0-beta", 200)),
+            beta: Some(release("2.0-beta", "2026-08-02T00:00:00.000000Z")),
             alpha: None,
         };
         assert!(select_release(&releases, ReleaseChannel::Stable).is_none());
@@ -630,34 +640,39 @@ mod tests {
 
     #[test]
     fn to_version_info_maps_release() {
-        let mut r = release("1.2.0", 1755100000000000);
+        let mut r = release("1.2.0", "2026-08-06T13:42:41.000000Z");
         r.supported_retail_patch = Some("11.2.0".to_string());
         let v = to_version_info(&r, "classcodex.zip".to_string()).unwrap();
         assert_eq!(v.file_id, None);
-        assert_eq!(v.external_release_id, Some("1755100000000000".to_string()));
+        assert_eq!(
+            v.external_release_id,
+            Some("2026-08-06T13:42:41.000000Z".to_string())
+        );
         assert_eq!(v.version, "1.2.0");
         assert_eq!(v.display_name, "1.2.0");
         assert_eq!(v.download_url, "https://example.com/1.2.0.zip");
         assert_eq!(v.file_name, "classcodex.zip");
         assert_eq!(v.game_versions, vec!["11.2.0".to_string()]);
-        assert_eq!(v.released_at, "2026-08-01T00:00:00Z");
+        assert_eq!(v.released_at, "2026-08-06T13:42:41.000000Z");
         assert!(v.dependencies.is_empty());
         assert!(v.modules.is_empty());
     }
 
     #[test]
     fn to_version_info_without_download_link_errors() {
-        let mut r = release("1.2.0", 1);
+        let mut r = release("1.2.0", "2026-08-01T00:00:00.000000Z");
         r.download_link = None;
         assert!(to_version_info(&r, "x.zip".to_string()).is_err());
     }
 
     #[test]
     fn search_response_deserializes() {
+        // Real search items carry no `slug` field; `website_url` is the
+        // fallback (see item_slug). Search release tiers DO carry
+        // logical_timestamp on the wire; the model no longer reads it.
         let json = serde_json::json!({
             "data": [{
                 "id": "rNkynwKa",
-                "slug": "classcodex",
                 "display_name": "ClassCodex",
                 "summary": "Class guide addon",
                 "download_count": 1234,
@@ -666,7 +681,7 @@ mod tests {
                     "stable": {
                         "label": "1.2.0",
                         "download_link": "https://addons.wago.io/api/external/files/abc/download",
-                        "created_at": "2026-08-01T00:00:00Z",
+                        "created_at": "2026-08-06T13:42:41.000000Z",
                         "logical_timestamp": 1755100000000000u64
                     }
                 }
@@ -675,11 +690,15 @@ mod tests {
         let resp: WagoSearchResponse = serde_json::from_value(json).unwrap();
         assert_eq!(resp.data.len(), 1);
         assert_eq!(resp.data[0].id, "rNkynwKa");
+        assert_eq!(resp.data[0].slug, None);
         assert!(!resp.data[0].is_hidden_from_external);
     }
 
     #[test]
-    fn detail_deserializes_with_recent_releases() {
+    fn detail_deserializes_with_recent_release() {
+        // Real detail responses key the releases object as `recent_release`
+        // (singular) and have no `is_hidden_from_external`, `id`, or
+        // `logical_timestamp` on the release.
         let json = serde_json::json!({
             "id": "rNkynwKa",
             "slug": "classcodex",
@@ -687,13 +706,11 @@ mod tests {
             "summary": "Class guide addon",
             "download_count": 1234,
             "website_url": "https://addons.wago.io/addons/classcodex",
-            "is_hidden_from_external": false,
-            "recent_releases": {
+            "recent_release": {
                 "stable": {
                     "label": "1.2.0",
                     "download_link": "https://addons.wago.io/api/external/files/abc/download",
-                    "created_at": "2026-08-01T00:00:00Z",
-                    "logical_timestamp": 1755100000000000u64,
+                    "created_at": "2026-08-06T13:42:41.000000Z",
                     "stability": "stable",
                     "supported_retail_patch": "11.2.0"
                 }
@@ -709,6 +726,8 @@ mod tests {
 
     #[test]
     fn recents_response_deserializes() {
+        // Real `_recents` release tiers use `link`/`patch`/`id`, no
+        // `logical_timestamp`.
         let json = serde_json::json!({
             "addons": {
                 "rNkynwKa": {
@@ -716,9 +735,10 @@ mod tests {
                     "recent_releases": {
                         "stable": {
                             "label": "1.3.0",
-                            "download_link": "https://example.com/1.3.0.zip",
-                            "created_at": "2026-08-10T00:00:00Z",
-                            "logical_timestamp": 1755200000000000u64
+                            "link": "https://example.com/1.3.0.zip",
+                            "created_at": "2026-08-10T00:00:00.000000Z",
+                            "id": "some-release-id",
+                            "patch": "11.2.0"
                         }
                     }
                 }
@@ -726,10 +746,13 @@ mod tests {
         });
         let resp: WagoRecentsResponse = serde_json::from_value(json).unwrap();
         let entry = resp.addons.get("rNkynwKa").unwrap();
+        let release = entry.recent_releases.stable.as_ref().unwrap();
+        assert_eq!(release.label, "1.3.0");
         assert_eq!(
-            entry.recent_releases.stable.as_ref().unwrap().label,
-            "1.3.0"
+            release.download_link,
+            Some("https://example.com/1.3.0.zip".to_string())
         );
+        assert_eq!(release.supported_retail_patch, Some("11.2.0".to_string()));
     }
 
     #[test]
