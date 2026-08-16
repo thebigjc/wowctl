@@ -10,6 +10,7 @@ use crate::error::{Result, WowctlError};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use tracing::debug;
 
 /// The addon platforms wowctl can talk to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum)]
@@ -130,6 +131,86 @@ pub trait AddonSource: Send + Sync {
         &self,
         slug: &str,
     ) -> impl std::future::Future<Output = Result<AddonInfo>> + Send;
+}
+
+/// Downloads a zip file via the given prepared request, validating that the
+/// response is a real zip archive (not an HTML error page) before writing it
+/// to `destination`. Shared by all Sources so download quality is identical.
+pub(crate) async fn download_zip(
+    request: reqwest::RequestBuilder,
+    download_url: &str,
+    destination: &Path,
+) -> Result<PathBuf> {
+    use crate::error::WowctlError;
+    use tokio::io::AsyncWriteExt;
+
+    debug!("Downloading from: {}", download_url);
+
+    let response = request
+        .send()
+        .await
+        .map_err(|e| WowctlError::Network(format!("Failed to download addon: {e}")))?;
+
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("(not set)")
+        .to_string();
+
+    debug!("Response: status={}, content-type={}", status, content_type);
+
+    if !status.is_success() {
+        return Err(WowctlError::Network(format!(
+            "Download failed with status: {status}"
+        )));
+    }
+
+    // Reject HTML error pages that CDNs sometimes serve with 200 OK
+    if content_type.contains("text/html") || content_type.contains("text/plain") {
+        return Err(WowctlError::Network(format!(
+            "Server returned {content_type} instead of a zip file — the download URL may be invalid: {download_url}"
+        )));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| WowctlError::Network(format!("Failed to read download: {e}")))?;
+
+    debug!("Downloaded {} bytes", bytes.len());
+
+    // Validate ZIP magic bytes (PK\x03\x04) before writing to disk
+    if bytes.len() < 4 || &bytes[..4] != b"PK\x03\x04" {
+        if bytes.len() < 1024 {
+            debug!(
+                "Response body for invalid zip (small, {} bytes): {:?}",
+                bytes.len(),
+                String::from_utf8_lossy(&bytes)
+            );
+        }
+        return Err(WowctlError::Extraction(format!(
+            "Downloaded file is not a valid zip archive (bad magic bytes). \
+             Got {} bytes, first 4: {:02x?}. \
+             The server may have returned an error page. URL: {}",
+            bytes.len(),
+            &bytes[..bytes.len().min(4)],
+            download_url
+        )));
+    }
+
+    if let Some(parent) = destination.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let mut file = tokio::fs::File::create(destination).await?;
+    file.write_all(&bytes).await?;
+    file.flush().await?;
+    drop(file);
+
+    debug!("Downloaded to: {}", destination.display());
+    Ok(destination.to_path_buf())
 }
 
 #[cfg(test)]
