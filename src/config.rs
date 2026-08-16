@@ -19,6 +19,10 @@ pub struct Config {
     pub addon_dir: Option<PathBuf>,
     /// CurseForge API key. Can also be set via WOWCTL_CURSEFORGE_API_KEY env var.
     pub curseforge_api_key: Option<String>,
+    /// Wago Addons personal access key. Can also be set via WOWCTL_WAGO_ACCESS_KEY env var.
+    /// Keys come from addons.wago.io/patreon (Wago Addons Supporter tier); see ADR-0001.
+    #[serde(default)]
+    pub wago_access_key: Option<String>,
     /// Whether to use colored output.
     #[serde(default = "default_color")]
     pub color: bool,
@@ -36,6 +40,7 @@ impl Default for Config {
         Self {
             addon_dir: None,
             curseforge_api_key: None,
+            wago_access_key: None,
             color: true,
             default_release_channel: None,
         }
@@ -110,6 +115,17 @@ impl Config {
         ))
     }
 
+    /// Gets the Wago access key, if configured.
+    /// Precedence: WOWCTL_WAGO_ACCESS_KEY env var > config file. There is no
+    /// embedded fallback key — Wago keys are personal (ADR-0001). `None`
+    /// means the Wago source is unconfigured.
+    pub fn get_wago_access_key(&self) -> Option<String> {
+        resolve_wago_key(
+            std::env::var("WOWCTL_WAGO_ACCESS_KEY").ok(),
+            self.wago_access_key.clone(),
+        )
+    }
+
     /// Resolves the release channel: CLI override > config default > Stable.
     pub fn resolve_channel(&self, cli_override: Option<ReleaseChannel>) -> ReleaseChannel {
         cli_override
@@ -164,5 +180,72 @@ impl Config {
         Err(WowctlError::InvalidAddonDir(
             "Could not auto-detect WoW addon directory. Please set it manually with 'wowctl config set addon_dir <path>'".to_string()
         ))
+    }
+}
+
+/// Resolves a Wago access key from an env-var value and a config value.
+/// Env takes precedence; blank/whitespace values are treated as unset.
+fn resolve_wago_key(env_val: Option<String>, config_val: Option<String>) -> Option<String> {
+    env_val
+        .filter(|s| !s.trim().is_empty())
+        .or(config_val)
+        .filter(|s| !s.trim().is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_wago_key_env_wins() {
+        assert_eq!(
+            resolve_wago_key(Some("env-key".into()), Some("cfg-key".into())),
+            Some("env-key".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_wago_key_falls_back_to_config() {
+        assert_eq!(
+            resolve_wago_key(None, Some("cfg-key".into())),
+            Some("cfg-key".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_wago_key_blank_env_falls_through() {
+        assert_eq!(
+            resolve_wago_key(Some("  ".into()), Some("cfg-key".into())),
+            Some("cfg-key".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_wago_key_none_when_unset() {
+        assert_eq!(resolve_wago_key(None, None), None);
+        assert_eq!(
+            resolve_wago_key(Some(String::new()), Some("  ".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn config_without_wago_key_parses() {
+        // Backward compat: existing config files have no wago_access_key field.
+        let config: Config = toml::from_str(
+            r#"
+            addon_dir = "/tmp/addons"
+            curseforge_api_key = "cf-key"
+            color = true
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.wago_access_key, None);
+    }
+
+    #[test]
+    fn config_with_wago_key_parses() {
+        let config: Config = toml::from_str(r#"wago_access_key = "abc123""#).unwrap();
+        assert_eq!(config.wago_access_key, Some("abc123".to_string()));
     }
 }
