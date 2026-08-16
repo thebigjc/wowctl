@@ -119,6 +119,7 @@ mod tests {
             game_versions: None,
             released_at: None,
             auto_update: None,
+            external_release_id: None,
         }
     }
 

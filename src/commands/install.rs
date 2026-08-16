@@ -243,13 +243,14 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
             } else {
                 vec![]
             },
-            installed_file_id: Some(downloaded.version_info.file_id),
+            installed_file_id: downloaded.version_info.file_id,
             display_name: Some(downloaded.version_info.display_name),
             channel: addon_channel,
             ignored: None,
             game_versions: Some(downloaded.version_info.game_versions),
             released_at: Some(downloaded.version_info.released_at),
             auto_update: None,
+            external_release_id: downloaded.version_info.external_release_id,
         };
 
         registry.add(installed);

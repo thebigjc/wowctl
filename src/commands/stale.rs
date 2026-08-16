@@ -246,6 +246,7 @@ mod tests {
             game_versions: None,
             released_at: released_at.map(|s| s.to_string()),
             auto_update: None,
+            external_release_id: None,
         }
     }
 

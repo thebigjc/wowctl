@@ -183,10 +183,25 @@ struct BatchModsRequest {
 #[derive(Debug)]
 pub struct BatchVersionCheck {
     pub addon_id: String,
-    pub file_id: u32,
+    pub file_id: Option<u32>,
+    pub external_release_id: Option<String>,
     pub version: String,
     pub display_name: String,
     pub released_at: String,
+}
+
+impl BatchVersionCheck {
+    /// Builds a batch-check entry from a full VersionInfo.
+    pub fn from_version_info(addon_id: &str, v: &crate::addon::VersionInfo) -> Self {
+        Self {
+            addon_id: addon_id.to_string(),
+            file_id: v.file_id,
+            external_release_id: v.external_release_id.clone(),
+            version: v.version.clone(),
+            display_name: v.display_name.clone(),
+            released_at: v.released_at.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -684,7 +699,8 @@ impl CurseForgeSource {
                 cf_mod.id.to_string(),
                 BatchVersionCheck {
                     addon_id: cf_mod.id.to_string(),
-                    file_id: retail_file_id,
+                    file_id: Some(retail_file_id),
+                    external_release_id: None,
                     version,
                     display_name,
                     released_at,
@@ -971,7 +987,8 @@ impl AddonSource for CurseForgeSource {
         }
 
         Ok(VersionInfo {
-            file_id,
+            file_id: Some(file_id),
+            external_release_id: None,
             version,
             display_name,
             download_url,

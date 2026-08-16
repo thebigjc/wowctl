@@ -119,11 +119,7 @@ pub async fn update(
                 let addon_channel =
                     resolve_addon_channel(installed, channel_override, default_channel);
                 if let Some(check) = batch_map.get(&installed.addon_id) {
-                    let has_update = match installed.installed_file_id {
-                        Some(installed_id) => check.file_id != installed_id,
-                        None => check.version != installed.version,
-                    };
-                    if has_update {
+                    if is_update_available(installed, check) {
                         updates.push(UpdateInfo {
                             slug: installed.slug.clone(),
                             name: installed.name.clone(),
@@ -352,7 +348,8 @@ fn apply_update(
                 cleanup_backup_dirs(addon_dir, &backed_up);
                 installed.version = download.version_info.version;
                 installed.directories = new_directories;
-                installed.installed_file_id = Some(download.version_info.file_id);
+                installed.installed_file_id = download.version_info.file_id;
+                installed.external_release_id = download.version_info.external_release_id.clone();
                 installed.display_name = Some(download.version_info.display_name);
                 installed.game_versions = Some(download.version_info.game_versions);
                 installed.released_at = Some(download.version_info.released_at);
@@ -406,16 +403,16 @@ async fn check_updates_sequential(
             .await
         {
             Ok(version_info) => {
-                let has_update = match installed.installed_file_id {
-                    Some(installed_id) => version_info.file_id != installed_id,
-                    None => version_info.version != installed.version,
-                };
-                if has_update {
+                let check = crate::sources::curseforge::BatchVersionCheck::from_version_info(
+                    &installed.addon_id,
+                    &version_info,
+                );
+                if is_update_available(installed, &check) {
                     updates.push(UpdateInfo {
                         slug: installed.slug.clone(),
                         name: installed.name.clone(),
                         current_version: installed.version.clone(),
-                        new_version: version_info.version,
+                        new_version: check.version.clone(),
                         addon_id: installed.addon_id.clone(),
                         channel: addon_channel,
                     });
@@ -430,6 +427,25 @@ async fn check_updates_sequential(
                 );
             }
         }
+    }
+}
+
+/// Determines whether a newer release is available by comparing the strongest
+/// release identity both sides share: external release ID (Wago), then numeric
+/// file ID (CurseForge), then the version string.
+fn is_update_available(
+    installed: &InstalledAddon,
+    latest: &crate::sources::curseforge::BatchVersionCheck,
+) -> bool {
+    match (
+        installed.external_release_id.as_deref(),
+        latest.external_release_id.as_deref(),
+    ) {
+        (Some(a), Some(b)) => a != b,
+        _ => match (installed.installed_file_id, latest.file_id) {
+            (Some(a), Some(b)) => a != b,
+            _ => installed.version != latest.version,
+        },
     }
 }
 
@@ -497,7 +513,8 @@ async fn refresh_stale_metadata(
             Ok(version_info) => {
                 if let Some(mut entry) = registry.get(&installed.slug).cloned() {
                     entry.version = version_info.version;
-                    entry.installed_file_id = Some(version_info.file_id);
+                    entry.installed_file_id = version_info.file_id;
+                    entry.external_release_id = version_info.external_release_id.clone();
                     entry.display_name = Some(version_info.display_name);
                     entry.game_versions = Some(version_info.game_versions);
                     entry.released_at = Some(version_info.released_at);
@@ -521,4 +538,122 @@ async fn refresh_stale_metadata(
     }
 
     refreshed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sources::curseforge::BatchVersionCheck;
+
+    fn make_installed(
+        file_id: Option<u32>,
+        release_id: Option<&str>,
+        version: &str,
+    ) -> InstalledAddon {
+        InstalledAddon {
+            name: "Test".to_string(),
+            slug: "test".to_string(),
+            version: version.to_string(),
+            source: "curseforge".to_string(),
+            addon_id: "1".to_string(),
+            directories: vec![],
+            is_dependency: false,
+            required_by: vec![],
+            installed_file_id: file_id,
+            display_name: None,
+            channel: None,
+            ignored: None,
+            game_versions: None,
+            released_at: None,
+            auto_update: None,
+            external_release_id: release_id.map(String::from),
+        }
+    }
+
+    fn make_check(
+        file_id: Option<u32>,
+        release_id: Option<&str>,
+        version: &str,
+    ) -> BatchVersionCheck {
+        BatchVersionCheck {
+            addon_id: "1".to_string(),
+            file_id,
+            external_release_id: release_id.map(String::from),
+            version: version.to_string(),
+            display_name: version.to_string(),
+            released_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn update_detected_by_external_release_id() {
+        let installed = make_installed(None, Some("100"), "1.0");
+        let latest = make_check(None, Some("200"), "1.0");
+        assert!(is_update_available(&installed, &latest));
+    }
+
+    #[test]
+    fn no_update_when_external_release_id_matches() {
+        let installed = make_installed(None, Some("100"), "1.0");
+        // Version string differs but release id matches: id wins.
+        let latest = make_check(None, Some("100"), "1.1");
+        assert!(!is_update_available(&installed, &latest));
+    }
+
+    #[test]
+    fn update_detected_by_file_id() {
+        let installed = make_installed(Some(10), None, "1.0");
+        let latest = make_check(Some(11), None, "1.0");
+        assert!(is_update_available(&installed, &latest));
+    }
+
+    #[test]
+    fn no_update_when_file_id_matches() {
+        let installed = make_installed(Some(10), None, "1.0");
+        let latest = make_check(Some(10), None, "1.1");
+        assert!(!is_update_available(&installed, &latest));
+    }
+
+    #[test]
+    fn falls_back_to_version_comparison() {
+        let installed = make_installed(None, None, "1.0");
+        assert!(is_update_available(
+            &installed,
+            &make_check(None, None, "1.1")
+        ));
+        assert!(!is_update_available(
+            &installed,
+            &make_check(None, None, "1.0")
+        ));
+    }
+
+    #[test]
+    fn mixed_identity_falls_back_to_version() {
+        // Installed pre-dates file-id tracking, latest has one: only versions are comparable.
+        let installed = make_installed(None, None, "1.0");
+        let latest = make_check(Some(11), None, "1.0");
+        assert!(!is_update_available(&installed, &latest));
+    }
+
+    #[test]
+    fn batch_check_from_version_info() {
+        let v = crate::addon::VersionInfo {
+            file_id: None,
+            external_release_id: Some("12345".to_string()),
+            version: "2.0".to_string(),
+            display_name: "2.0".to_string(),
+            download_url: "https://example.com/a.zip".to_string(),
+            file_name: "a.zip".to_string(),
+            file_size: 0,
+            game_versions: vec![],
+            released_at: "2026-01-01T00:00:00Z".to_string(),
+            dependencies: vec![],
+            modules: vec![],
+        };
+        let check = BatchVersionCheck::from_version_info("rNkynwKa", &v);
+        assert_eq!(check.addon_id, "rNkynwKa");
+        assert_eq!(check.file_id, None);
+        assert_eq!(check.external_release_id, Some("12345".to_string()));
+        assert_eq!(check.version, "2.0");
+    }
 }
