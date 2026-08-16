@@ -27,7 +27,7 @@ pub enum WowctlError {
     Network(String),
 
     #[error(
-        "CurseForge API is temporarily unavailable after multiple consecutive failures. Please try again in a few seconds."
+        "The addon source API is temporarily unavailable after multiple consecutive failures. Please try again in a few seconds."
     )]
     CircuitBreakerOpen,
 
@@ -45,6 +45,9 @@ pub enum WowctlError {
 
     #[error("Missing API key: {0}")]
     MissingApiKey(String),
+
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
 
     #[error("Dependency error: {0}")]
     Dependency(String),

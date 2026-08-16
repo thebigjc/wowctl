@@ -2,3 +2,4 @@
 /planning
 .DS_Store
 *.rs.bk
+.superpowers/

@@ -45,8 +45,9 @@ src/
     info.rs            # Show addon details
     adopt.rs           # Adopt unmanaged addons into registry
   sources/
-    mod.rs             # AddonSource trait (extensible for future sources)
+    mod.rs             # AddonSource trait, SourceKind, AnySource dispatch, spec parsing
     curseforge.rs      # CurseForge API client
+    wago.rs            # Wago Addons API client
 ```
 
 ## Configuration
@@ -64,6 +65,7 @@ src/
 - Environment variable takes precedence over config file.
 - Key is obtained through formal application at https://forms.monday.com/forms/dce5ccb7afda9a1c21dab1a1aa1d84eb?r=use1
 - The legacy.curseforge.com token (X-Api-Token) is NOT the same as the Core API key (x-api-key).
+- Wago access key (optional): `WOWCTL_WAGO_ACCESS_KEY` or `wago_access_key` in config.toml; see Wago API Details.
 
 ## CurseForge API Constraints (from T&C)
 
@@ -82,6 +84,50 @@ src/
 - **Slug lookup:** Use the `slug` query parameter on `/mods/search` for exact matching (not `searchFilter`, which is fuzzy text search)
 - **Retail file filtering:** Pass `gameVersionTypeId=517` to `/mods/{id}/files` for server-side filtering — do not attempt client-side version string matching
 - **Download URL fallback:** When `allowModDistribution` is not explicitly `true` on a mod, the `downloadUrl` field in file listings is `null`. Our fallback chain: (1) try the dedicated `GET /v1/mods/{modId}/files/{fileId}/download-url` endpoint, (2) if that also fails, construct a CDN URL via `https://edge.forgecdn.net/files/{id/1000}/{id%1000}/{fileName}`. The CDN hosts the same files the API would link to; the `id / 1000` and `id % 1000` path segments match the URL format the API returns when `downloadUrl` is populated.
+
+## Wago API Details (unofficial — see ADR-0001)
+
+Contract validated live on 2026-08-16 against ClassCodex (id `rNkynwKa`) via
+a real access key; it drifted from the WowUp-derived contract we originally
+built against (see below). Re-validate against a real key before trusting
+this section blindly on a future drift.
+
+- **Base URL:** `https://addons.wago.io/api/external`
+- **Endpoints used:** `GET /addons/_search?query=&game_version=retail&stability=`,
+  `GET /addons/{id}?game_version=retail` (accepts ID or slug),
+  `POST /addons/_recents` with `{"game_version":"retail","addons":[ids]}`.
+- **Auth:** `Authorization: Bearer <personal access key>` on every call AND every
+  download (links are signed/expiring). Key source: addons.wago.io/patreon
+  ("Wago Addons Supporter" tier). Never embed a Wago key in builds.
+- **Detail releases field is singular:** `GET /addons/{id}` returns
+  `recent_release` (not `recent_releases`); `_recents` batch entries use
+  `recent_releases` (plural). Don't assume the two endpoints share a field
+  name for the same concept.
+- **Release identity is `created_at`**, stored as `external_release_id` in the
+  registry — Wago has no numeric file/release ID on detail or `_recents`
+  responses. `created_at` is byte-identical across all three endpoints for the
+  same release, fixed-width ISO-8601 UTC (e.g. `2026-08-06T13:42:41.000000Z`),
+  so lexicographic comparison equals chronological order. There is no
+  `logical_timestamp` on detail or `_recents` release objects (search release
+  tiers do still carry it on the wire, but the client no longer reads it
+  anywhere).
+- **`_recents` batch releases use different field names than detail/search:**
+  the download URL is `link` (not `download_link`) and the retail patch is
+  `patch` (not `supported_retail_patch`); the client aliases both.
+- **Stability tiers** stable/beta/alpha map 1:1 to wowctl release channels.
+- **Search items have no `slug` field.** Derive the slug from the last path
+  segment of `website_url` (e.g. `https://addons.wago.io/addons/classcodex`
+  → `classcodex`); detail responses do carry `slug` directly.
+- **`is_hidden_from_external` is absent from the live API** (search items and
+  detail responses) — the external API filters hidden addons server-side.
+  The client still checks this field defensively wherever it deserializes
+  (defaults to `false` when absent), in case it reappears.
+- **Reference implementation:** WowUp's
+  `wowup-electron/src/app/addon-providers/wago-addon-provider.ts` — this is
+  where the *original* (now partially incorrect) contract came from; treat it
+  as a starting point, not ground truth, and re-validate against a real key
+  when in doubt.
+- **Motivating/acceptance addon:** ClassCodex (slug `classcodex`, ID `rNkynwKa`).
 
 ## Known Issues
 
@@ -132,3 +178,4 @@ WoWUp ([github.com/WowUp/WowUp](https://github.com/WowUp/WowUp)) is an open-sour
 - `dirs` — Platform-specific directory resolution
 - `fs2` — Disk space checking
 - `uuid` — Temp directory naming
+- `wiremock` (dev) — HTTP-boundary tests

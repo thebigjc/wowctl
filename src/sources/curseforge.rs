@@ -9,12 +9,12 @@ use crate::addon::{
 use crate::circuit_breaker::CircuitBreaker;
 use crate::error::{Result, WowctlError};
 use crate::sources::AddonSource;
+use crate::sources::BatchVersionCheck;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
 
 const CURSEFORGE_API_BASE: &str = "https://api.curseforge.com/v1";
@@ -40,6 +40,7 @@ fn build_cdn_url(file_id: u32, file_name: &str) -> String {
 pub struct CurseForgeSource {
     client: Client,
     api_key: String,
+    api_base: String,
     circuit_breaker: CircuitBreaker,
 }
 
@@ -179,16 +180,6 @@ struct BatchModsRequest {
     mod_ids: Vec<u32>,
 }
 
-/// Lightweight version info from a batch mod lookup, sufficient for update detection.
-#[derive(Debug)]
-pub struct BatchVersionCheck {
-    pub addon_id: String,
-    pub file_id: u32,
-    pub version: String,
-    pub display_name: String,
-    pub released_at: String,
-}
-
 #[derive(Debug, Serialize)]
 struct FingerprintsRequest {
     fingerprints: Vec<u32>,
@@ -239,6 +230,11 @@ pub struct FingerprintMatch {
 impl CurseForgeSource {
     /// Creates a new CurseForge source with the provided API key.
     pub fn new(api_key: String) -> Result<Self> {
+        Self::with_base_url(api_key, CURSEFORGE_API_BASE.to_string())
+    }
+
+    /// Creates a CurseForge source pointed at a custom API base URL (tests).
+    pub fn with_base_url(api_key: String, api_base: String) -> Result<Self> {
         let client = Client::builder()
             .user_agent(format!("wowctl/{}", env!("WOWCTL_VERSION")))
             .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
@@ -248,6 +244,7 @@ impl CurseForgeSource {
         Ok(Self {
             client,
             api_key,
+            api_base,
             circuit_breaker: CircuitBreaker::new(),
         })
     }
@@ -255,23 +252,8 @@ impl CurseForgeSource {
     /// Gets addon information by numeric ID as raw JSON.
     pub async fn get_addon_by_id(&self, addon_id: &str) -> Result<serde_json::Value> {
         debug!("Looking up addon by ID: {}", addon_id);
-        let url = format!("{CURSEFORGE_API_BASE}/mods/{addon_id}");
+        let url = format!("{}/mods/{addon_id}", self.api_base);
         self.make_request_with_retry(&url).await
-    }
-
-    /// Gets typed addon information by numeric ID.
-    pub async fn get_addon_info_by_id(&self, addon_id: &str) -> Result<AddonInfo> {
-        debug!("Looking up addon info by ID: {}", addon_id);
-        let url = format!("{CURSEFORGE_API_BASE}/mods/{addon_id}");
-        let mod_data: CfMod = self.make_request_with_retry(&url).await?;
-        Ok(AddonInfo {
-            id: mod_data.id.to_string(),
-            name: mod_data.name,
-            slug: mod_data.slug,
-            description: mod_data.summary,
-            download_count: mod_data.download_count.map(|d| d as u64),
-            source: "curseforge".to_string(),
-        })
     }
 
     /// Resolves a download URL for a file when the inline `downloadUrl` is null.
@@ -286,7 +268,8 @@ impl CurseForgeSource {
         file_name: &str,
     ) -> Result<String> {
         let url = format!(
-            "{CURSEFORGE_API_BASE}/mods/{addon_id}/files/{file_id}/download-url"
+            "{}/mods/{addon_id}/files/{file_id}/download-url",
+            self.api_base
         );
         match self.make_request_with_retry::<String>(&url).await {
             Ok(download_url) if !download_url.is_empty() => {
@@ -627,121 +610,6 @@ impl CurseForgeSource {
         }
     }
 
-    /// Fetches multiple mods in a single API call and returns the latest retail
-    /// version info for each, keyed by addon ID string.
-    pub async fn get_latest_versions_batch(
-        &self,
-        addon_ids: &[&str],
-        channel: ReleaseChannel,
-    ) -> Result<HashMap<String, BatchVersionCheck>> {
-        if addon_ids.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        let mod_ids: Vec<u32> = addon_ids
-            .iter()
-            .filter_map(|id| id.parse::<u32>().ok())
-            .collect();
-
-        debug!(
-            "Batch fetching {} mods from CurseForge (channel: {})",
-            mod_ids.len(),
-            channel
-        );
-        let url = format!("{CURSEFORGE_API_BASE}/mods");
-        let body = BatchModsRequest { mod_ids };
-        let mods: Vec<CfMod> = self.make_post_request_with_retry(&url, &body).await?;
-
-        let mut results = HashMap::new();
-        for cf_mod in mods {
-            let retail_file_id = cf_mod
-                .latest_files_indexes
-                .iter()
-                .filter(|idx| idx.game_version_type_id == Some(WOW_RETAIL_VERSION_TYPE_ID))
-                .filter(|idx| channel.includes_release_type(idx.release_type))
-                .map(|idx| idx.file_id)
-                .max();
-
-            let retail_file_id = match retail_file_id {
-                Some(id) => id,
-                None => continue,
-            };
-
-            let latest_file = cf_mod
-                .latest_files
-                .as_ref()
-                .and_then(|files| files.iter().find(|f| f.id == retail_file_id));
-
-            let (version, display_name, released_at) = match latest_file {
-                Some(file) => {
-                    let version = self.extract_version_from_display_name(&file.display_name);
-                    (version, file.display_name.clone(), file.file_date.clone())
-                }
-                None => continue,
-            };
-
-            results.insert(
-                cf_mod.id.to_string(),
-                BatchVersionCheck {
-                    addon_id: cf_mod.id.to_string(),
-                    file_id: retail_file_id,
-                    version,
-                    display_name,
-                    released_at,
-                },
-            );
-        }
-
-        debug!(
-            "Batch check returned version info for {} of {} addons",
-            results.len(),
-            addon_ids.len()
-        );
-        Ok(results)
-    }
-
-    /// Fetches multiple mods by ID in a single API call and returns `AddonInfo` for each.
-    ///
-    /// Uses `POST /v1/mods` to batch-resolve addon metadata, reducing per-dependency
-    /// API calls from 2 (get_by_id + get_by_slug) to a single batch request.
-    pub async fn get_addon_infos_batch(&self, addon_ids: &[String]) -> Result<Vec<AddonInfo>> {
-        if addon_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mod_ids: Vec<u32> = addon_ids
-            .iter()
-            .filter_map(|id| id.parse::<u32>().ok())
-            .collect();
-
-        if mod_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        debug!(
-            "Batch fetching {} addon infos from CurseForge",
-            mod_ids.len()
-        );
-        let url = format!("{CURSEFORGE_API_BASE}/mods");
-        let body = BatchModsRequest { mod_ids };
-        let mods: Vec<CfMod> = self.make_post_request_with_retry(&url, &body).await?;
-
-        let results: Vec<AddonInfo> = mods
-            .into_iter()
-            .map(|m| AddonInfo {
-                id: m.id.to_string(),
-                name: m.name,
-                slug: m.slug,
-                description: m.summary,
-                download_count: m.download_count.map(|d| d as u64),
-                source: "curseforge".to_string(),
-            })
-            .collect();
-
-        debug!("Batch lookup returned {} addon infos", results.len());
-        Ok(results)
-    }
-
     /// Matches addon fingerprints against CurseForge's database in a single API call.
     ///
     /// Sends all fingerprints via `POST /v1/fingerprints` and returns both exact
@@ -764,7 +632,7 @@ impl CurseForgeSource {
             "Sending {} fingerprints to CurseForge for matching",
             fingerprints.len()
         );
-        let url = format!("{CURSEFORGE_API_BASE}/fingerprints");
+        let url = format!("{}/fingerprints", self.api_base);
         let body = FingerprintsRequest {
             fingerprints: fingerprints.to_vec(),
         };
@@ -867,7 +735,7 @@ impl AddonSource for CurseForgeSource {
             query, page_num, index
         );
 
-        let url = format!("{CURSEFORGE_API_BASE}/mods/search");
+        let url = format!("{}/mods/search", self.api_base);
         let params = SearchParams {
             game_id: WOW_GAME_ID,
             class_id: WOW_ADDONS_CLASS_ID,
@@ -917,7 +785,7 @@ impl AddonSource for CurseForgeSource {
             addon_id, channel
         );
 
-        let url = format!("{CURSEFORGE_API_BASE}/mods/{addon_id}/files");
+        let url = format!("{}/mods/{addon_id}/files", self.api_base);
         let params = [("gameVersionTypeId", WOW_RETAIL_VERSION_TYPE_ID.to_string())];
         let files: Vec<CfFile> = self.make_request_with_retry_params(&url, &params).await?;
 
@@ -971,7 +839,8 @@ impl AddonSource for CurseForgeSource {
         }
 
         Ok(VersionInfo {
-            file_id,
+            file_id: Some(file_id),
+            external_release_id: None,
             version,
             display_name,
             download_url,
@@ -985,99 +854,7 @@ impl AddonSource for CurseForgeSource {
     }
 
     async fn download(&self, download_url: &str, destination: &Path) -> Result<PathBuf> {
-        debug!("Downloading from: {}", download_url);
-
-        let response = self
-            .client
-            .get(download_url)
-            .send()
-            .await
-            .map_err(|e| WowctlError::Network(format!("Failed to download addon: {e}")))?;
-
-        let status = response.status();
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("(not set)")
-            .to_string();
-        let content_length = response
-            .headers()
-            .get(reqwest::header::CONTENT_LENGTH)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("(not set)")
-            .to_string();
-        let content_encoding = response
-            .headers()
-            .get(reqwest::header::CONTENT_ENCODING)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("(not set)")
-            .to_string();
-
-        debug!(
-            "Response: status={}, content-type={}, content-length={}, content-encoding={}",
-            status, content_type, content_length, content_encoding
-        );
-
-        if !status.is_success() {
-            return Err(WowctlError::Network(format!(
-                "Download failed with status: {status}"
-            )));
-        }
-
-        // Reject HTML error pages that CDNs sometimes serve with 200 OK
-        if content_type.contains("text/html") || content_type.contains("text/plain") {
-            return Err(WowctlError::Network(format!(
-                "CDN returned {content_type} instead of a zip file — the download URL may be invalid: {download_url}"
-            )));
-        }
-
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| WowctlError::Network(format!("Failed to read download: {e}")))?;
-
-        debug!("Downloaded {} bytes", bytes.len());
-
-        // Log first and last bytes for diagnosing corrupted/truncated downloads
-        if bytes.len() >= 16 {
-            debug!("First 16 bytes: {:02x?}", &bytes[..16]);
-            debug!(
-                "Last 16 bytes: {:02x?}",
-                &bytes[bytes.len() - 16..]
-            );
-        }
-        // Validate ZIP magic bytes (PK\x03\x04) before writing to disk
-        if bytes.len() < 4 || &bytes[..4] != b"PK\x03\x04" {
-            if bytes.len() < 1024 {
-                // Dump small non-zip response body for debugging (likely an error page)
-                debug!(
-                    "Response body for invalid zip (small, {} bytes): {:?}",
-                    bytes.len(),
-                    String::from_utf8_lossy(&bytes)
-                );
-            }
-            return Err(WowctlError::Extraction(format!(
-                "Downloaded file is not a valid zip archive (bad magic bytes). \
-                 Got {} bytes, first 4: {:02x?}. \
-                 The CDN may have returned an error page. URL: {}",
-                bytes.len(),
-                &bytes[..bytes.len().min(4)],
-                download_url
-            )));
-        }
-
-        if let Some(parent) = destination.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
-        let mut file = tokio::fs::File::create(destination).await?;
-        file.write_all(&bytes).await?;
-        file.flush().await?;
-        drop(file);
-
-        debug!("Downloaded to: {}", destination.display());
-        Ok(destination.to_path_buf())
+        crate::sources::download_zip(self.client.get(download_url), download_url, destination).await
     }
 
     async fn resolve_dependencies(
@@ -1103,7 +880,7 @@ impl AddonSource for CurseForgeSource {
     async fn get_addon_by_slug(&self, slug: &str) -> Result<AddonInfo> {
         debug!("Looking up addon by slug: {}", slug);
 
-        let url = format!("{CURSEFORGE_API_BASE}/mods/search");
+        let url = format!("{}/mods/search", self.api_base);
         let params = SlugSearchParams {
             game_id: WOW_GAME_ID,
             slug: slug.to_string(),
@@ -1124,6 +901,137 @@ impl AddonSource for CurseForgeSource {
             download_count: mod_data.download_count.map(|d| d as u64),
             source: "curseforge".to_string(),
         })
+    }
+
+    /// Gets typed addon information by numeric ID.
+    async fn get_addon_info_by_id(&self, addon_id: &str) -> Result<AddonInfo> {
+        debug!("Looking up addon info by ID: {}", addon_id);
+        let url = format!("{}/mods/{addon_id}", self.api_base);
+        let mod_data: CfMod = self.make_request_with_retry(&url).await?;
+        Ok(AddonInfo {
+            id: mod_data.id.to_string(),
+            name: mod_data.name,
+            slug: mod_data.slug,
+            description: mod_data.summary,
+            download_count: mod_data.download_count.map(|d| d as u64),
+            source: "curseforge".to_string(),
+        })
+    }
+
+    /// Fetches multiple mods in a single API call and returns the latest retail
+    /// version info for each, keyed by addon ID string.
+    async fn get_latest_versions_batch(
+        &self,
+        addon_ids: &[&str],
+        channel: ReleaseChannel,
+    ) -> Result<HashMap<String, BatchVersionCheck>> {
+        if addon_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mod_ids: Vec<u32> = addon_ids
+            .iter()
+            .filter_map(|id| id.parse::<u32>().ok())
+            .collect();
+
+        debug!(
+            "Batch fetching {} mods from CurseForge (channel: {})",
+            mod_ids.len(),
+            channel
+        );
+        let url = format!("{}/mods", self.api_base);
+        let body = BatchModsRequest { mod_ids };
+        let mods: Vec<CfMod> = self.make_post_request_with_retry(&url, &body).await?;
+
+        let mut results = HashMap::new();
+        for cf_mod in mods {
+            let retail_file_id = cf_mod
+                .latest_files_indexes
+                .iter()
+                .filter(|idx| idx.game_version_type_id == Some(WOW_RETAIL_VERSION_TYPE_ID))
+                .filter(|idx| channel.includes_release_type(idx.release_type))
+                .map(|idx| idx.file_id)
+                .max();
+
+            let retail_file_id = match retail_file_id {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let latest_file = cf_mod
+                .latest_files
+                .as_ref()
+                .and_then(|files| files.iter().find(|f| f.id == retail_file_id));
+
+            let (version, display_name, released_at) = match latest_file {
+                Some(file) => {
+                    let version = self.extract_version_from_display_name(&file.display_name);
+                    (version, file.display_name.clone(), file.file_date.clone())
+                }
+                None => continue,
+            };
+
+            results.insert(
+                cf_mod.id.to_string(),
+                BatchVersionCheck {
+                    addon_id: cf_mod.id.to_string(),
+                    file_id: Some(retail_file_id),
+                    external_release_id: None,
+                    version,
+                    display_name,
+                    released_at,
+                },
+            );
+        }
+
+        debug!(
+            "Batch check returned version info for {} of {} addons",
+            results.len(),
+            addon_ids.len()
+        );
+        Ok(results)
+    }
+
+    /// Fetches multiple mods by ID in a single API call and returns `AddonInfo` for each.
+    ///
+    /// Uses `POST /v1/mods` to batch-resolve addon metadata, reducing per-dependency
+    /// API calls from 2 (get_by_id + get_by_slug) to a single batch request.
+    async fn get_addon_infos_batch(&self, addon_ids: &[String]) -> Result<Vec<AddonInfo>> {
+        if addon_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mod_ids: Vec<u32> = addon_ids
+            .iter()
+            .filter_map(|id| id.parse::<u32>().ok())
+            .collect();
+
+        if mod_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        debug!(
+            "Batch fetching {} addon infos from CurseForge",
+            mod_ids.len()
+        );
+        let url = format!("{}/mods", self.api_base);
+        let body = BatchModsRequest { mod_ids };
+        let mods: Vec<CfMod> = self.make_post_request_with_retry(&url, &body).await?;
+
+        let results: Vec<AddonInfo> = mods
+            .into_iter()
+            .map(|m| AddonInfo {
+                id: m.id.to_string(),
+                name: m.name,
+                slug: m.slug,
+                description: m.summary,
+                download_count: m.download_count.map(|d| d as u64),
+                source: "curseforge".to_string(),
+            })
+            .collect();
+
+        debug!("Batch lookup returned {} addon infos", results.len());
+        Ok(results)
     }
 }
 

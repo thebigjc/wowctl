@@ -9,20 +9,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
-/// Extracts the addon slug from a CurseForge URL.
-pub fn extract_slug_from_url(url: &str) -> Result<String> {
-    if url.contains("curseforge.com/wow/addons/") {
-        let parts: Vec<&str> = url.split('/').collect();
-        if let Some(slug) = parts.last() {
-            return Ok(slug.to_string());
-        }
-    }
-
-    Err(WowctlError::Source(format!(
-        "Invalid CurseForge URL: {url}"
-    )))
-}
-
 /// Validates that a path exists and is a directory.
 pub fn validate_addon_dir(path: &Path) -> Result<()> {
     if !path.exists() {

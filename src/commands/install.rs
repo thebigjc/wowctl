@@ -3,11 +3,10 @@ use crate::colors::ColorExt;
 use crate::config::Config;
 use crate::error::{Result, WowctlError};
 use crate::registry::Registry;
-use crate::sources::AddonSource;
-use crate::sources::curseforge::CurseForgeSource;
+use crate::sources::{AddonSource, SourceKind, build_source, parse_addon_spec};
 use crate::utils::{
-    check_directory_conflicts, check_disk_space, cleanup_temp_dir, extract_slug_from_url,
-    extract_zip_to_temp, move_addon_dirs,
+    check_directory_conflicts, check_disk_space, cleanup_temp_dir, extract_zip_to_temp,
+    move_addon_dirs,
 };
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
@@ -26,22 +25,37 @@ struct DownloadedAddon {
     extracted_dirs: Vec<String>,
 }
 
+/// Guards the Registry's one-Slug-one-Source invariant on install.
+/// Ok(Some(existing)) = already installed from this same Source;
+/// Err = installed from a different Source (user must remove first);
+/// Ok(None) = not installed.
+fn check_source_collision(
+    registry: &Registry,
+    slug: &str,
+    kind: SourceKind,
+) -> Result<Option<InstalledAddon>> {
+    match registry.get(slug) {
+        None => Ok(None),
+        Some(existing) if existing.source == kind.as_str() => Ok(Some(existing.clone())),
+        Some(existing) => Err(WowctlError::Source(format!(
+            "'{slug}' is already installed from {}. An addon can only have one \
+             update origin — run 'wowctl remove {slug}' first, then install it from {}.",
+            existing.source,
+            kind.as_str()
+        ))),
+    }
+}
+
 pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> Result<()> {
     let config = Config::load()?;
     let addon_dir = config.get_addon_dir()?;
-    let api_key = config.get_api_key()?;
     let channel = config.resolve_channel(channel_override);
 
-    let slug = if addon.starts_with("http") {
-        extract_slug_from_url(addon)?
-    } else {
-        addon.to_string()
-    };
+    let (source_kind, slug) = parse_addon_spec(addon)?;
 
-    let source = Arc::new(CurseForgeSource::new(api_key)?);
     let mut registry = Registry::load()?;
 
-    if let Some(existing) = registry.get(&slug) {
+    if let Some(existing) = check_source_collision(&registry, &slug, source_kind)? {
         println!(
             "{} is already installed (version {})",
             existing.name.color_cyan(),
@@ -49,6 +63,9 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
         );
         return Ok(());
     }
+
+    // Errors here include the missing-Wago-key guidance from build_source.
+    let source = Arc::new(build_source(source_kind, &config)?);
 
     let addon_info = source.get_addon_by_slug(&slug).await?;
 
@@ -243,13 +260,14 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
             } else {
                 vec![]
             },
-            installed_file_id: Some(downloaded.version_info.file_id),
+            installed_file_id: downloaded.version_info.file_id,
             display_name: Some(downloaded.version_info.display_name),
             channel: addon_channel,
             ignored: None,
             game_versions: Some(downloaded.version_info.game_versions),
             released_at: Some(downloaded.version_info.released_at),
             auto_update: None,
+            external_release_id: downloaded.version_info.external_release_id,
         };
 
         registry.add(installed);
@@ -267,5 +285,59 @@ fn cleanup_downloaded(downloads: &[DownloadedAddon]) {
     for d in downloads {
         let _ = cleanup_temp_dir(&d.temp_extract_dir);
         let _ = std::fs::remove_file(&d.temp_zip);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sources::SourceKind;
+
+    fn registry_with(slug: &str, source: &str) -> Registry {
+        let mut registry = Registry::default();
+        registry.add(InstalledAddon {
+            name: slug.to_string(),
+            slug: slug.to_string(),
+            version: "1.0.0".to_string(),
+            source: source.to_string(),
+            addon_id: "1".to_string(),
+            directories: vec![],
+            is_dependency: false,
+            required_by: vec![],
+            installed_file_id: None,
+            display_name: None,
+            channel: None,
+            ignored: None,
+            game_versions: None,
+            released_at: None,
+            auto_update: None,
+            external_release_id: None,
+        });
+        registry
+    }
+
+    #[test]
+    fn not_installed_returns_none() {
+        let registry = Registry::default();
+        let result = check_source_collision(&registry, "classcodex", SourceKind::Wago).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn same_source_returns_existing() {
+        let registry = registry_with("classcodex", "wago");
+        let existing = check_source_collision(&registry, "classcodex", SourceKind::Wago)
+            .unwrap()
+            .unwrap();
+        assert_eq!(existing.slug, "classcodex");
+    }
+
+    #[test]
+    fn different_source_is_hard_error() {
+        let registry = registry_with("classcodex", "curseforge");
+        let err = check_source_collision(&registry, "classcodex", SourceKind::Wago).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("curseforge"), "got: {msg}");
+        assert!(msg.contains("wowctl remove classcodex"), "got: {msg}");
     }
 }

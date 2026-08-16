@@ -119,6 +119,7 @@ mod tests {
             game_versions: None,
             released_at: None,
             auto_update: None,
+            external_release_id: None,
         }
     }
 
@@ -183,5 +184,21 @@ mod tests {
         let result = remove_addon_from_registry(&mut registry, "ghost-addon", tmp.path());
         assert!(result.is_ok());
         assert!(registry.get("ghost-addon").is_none());
+    }
+
+    #[test]
+    fn remove_works_for_wago_sourced_addon() {
+        let tmp = tempdir().unwrap();
+        let dir = tmp.path().join("ClassCodex");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut registry = Registry::default();
+        let mut addon = make_addon("classcodex", vec!["ClassCodex"]);
+        addon.source = "wago".to_string();
+        registry.add(addon);
+
+        let removed = registry.remove("classcodex").unwrap();
+        assert_eq!(removed.source, "wago");
+        assert!(registry.get("classcodex").is_none());
     }
 }

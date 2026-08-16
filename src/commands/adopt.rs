@@ -123,13 +123,14 @@ async fn adopt_single(
         directories,
         is_dependency: false,
         required_by: vec![],
-        installed_file_id: Some(version_info.file_id),
+        installed_file_id: version_info.file_id,
         display_name: Some(version_info.display_name),
         channel: None,
         ignored: None,
         game_versions: Some(version_info.game_versions),
         released_at: Some(version_info.released_at),
         auto_update: None,
+        external_release_id: version_info.external_release_id,
     };
 
     registry.add(installed);
@@ -251,7 +252,7 @@ async fn adopt_all(
                     {
                         Ok(v) => (
                             v.version,
-                            Some(v.file_id),
+                            v.file_id,
                             Some(v.display_name),
                             Some(v.game_versions),
                             Some(v.released_at),
@@ -315,7 +316,7 @@ async fn adopt_all(
                     {
                         Ok(v) => (
                             v.version,
-                            Some(v.file_id),
+                            v.file_id,
                             Some(v.display_name),
                             Some(v.game_versions),
                             Some(v.released_at),
@@ -476,6 +477,9 @@ async fn adopt_all(
             game_versions: proposal.game_versions,
             released_at: proposal.released_at,
             auto_update: None,
+            // Adopt is CurseForge-only by design (plan/issue #8), which has no
+            // external release id concept; a future Wago-adopt effort must revisit.
+            external_release_id: None,
         };
 
         println!("  Adopting {}...", installed.name.color_cyan());

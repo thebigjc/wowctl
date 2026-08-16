@@ -36,7 +36,13 @@ impl SearchResult {
 /// Version information for a specific addon release.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionInfo {
-    pub file_id: u32,
+    /// Source-assigned numeric file ID. Some for CurseForge; None for Sources
+    /// (e.g. Wago) that do not use numeric file IDs.
+    pub file_id: Option<u32>,
+    /// Opaque per-release identity for Sources without numeric file IDs
+    /// (Wago's logical_timestamp). Used for update detection.
+    #[serde(default)]
+    pub external_release_id: Option<String>,
     pub version: String,
     pub display_name: String,
     pub download_url: String,
@@ -177,6 +183,9 @@ pub struct InstalledAddon {
     pub released_at: Option<String>,
     #[serde(default)]
     pub auto_update: Option<bool>,
+    /// Opaque release identity for Sources without numeric file IDs (Wago).
+    #[serde(default)]
+    pub external_release_id: Option<String>,
 }
 
 impl InstalledAddon {
@@ -349,6 +358,42 @@ mod tests {
         let addon: InstalledAddon = toml::from_str(toml_str).unwrap();
         assert_eq!(addon.auto_update, Some(false));
         assert!(!addon.is_auto_update());
+    }
+
+    #[test]
+    fn installed_addon_external_release_id_roundtrip() {
+        let toml_str = r#"
+            name = "ClassCodex"
+            slug = "classcodex"
+            version = "1.2.0"
+            source = "wago"
+            addon_id = "rNkynwKa"
+            directories = ["ClassCodex"]
+            is_dependency = false
+            required_by = []
+            external_release_id = "1755100000000000"
+        "#;
+        let addon: InstalledAddon = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            addon.external_release_id,
+            Some("1755100000000000".to_string())
+        );
+    }
+
+    #[test]
+    fn installed_addon_external_release_id_defaults_to_none() {
+        let toml_str = r#"
+            name = "Plumber"
+            slug = "plumber"
+            version = "1.8.8"
+            source = "curseforge"
+            addon_id = "12345"
+            directories = ["Plumber"]
+            is_dependency = false
+            required_by = []
+        "#;
+        let addon: InstalledAddon = toml::from_str(toml_str).unwrap();
+        assert_eq!(addon.external_release_id, None);
     }
 
     #[test]

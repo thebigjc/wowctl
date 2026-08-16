@@ -39,7 +39,43 @@ pub async fn init() -> Result<()> {
     config.curseforge_api_key = Some(api_key);
     println!();
 
-    println!("{}", "Step 2: Addon Directory".color_bold());
+    println!("{}", "Step 2: Wago Addons access key (optional)".color_bold());
+    println!("Needed only for Wago-exclusive addons (installed with 'wago:<slug>').");
+    println!("Keys come from https://addons.wago.io/patreon and require the");
+    println!("'Wago Addons Supporter' Patreon tier. Press Enter to skip.");
+    println!();
+
+    let wago_key: String = Input::new()
+        .with_prompt("Enter your Wago access key (optional)")
+        .allow_empty(true)
+        .interact_text()
+        .map_err(|e| WowctlError::Config(format!("Failed to read input: {e}")))?;
+
+    let wago_key = wago_key.trim().to_string();
+    if !wago_key.is_empty() {
+        println!("{}", "Verifying Wago access key...".color_dimmed());
+        let test_wago = crate::sources::wago::WagoSource::new(wago_key.clone())?;
+        match test_wago.search("weakauras", None).await {
+            Ok(_) => println!("{}", "Wago access key verified successfully!".color_green()),
+            Err(WowctlError::Unauthorized(msg)) => {
+                return Err(WowctlError::Config(format!(
+                    "Wago access key verification failed: {msg}"
+                )));
+            }
+            Err(e) => {
+                // Network hiccup or API drift: keep the key, warn the user.
+                println!(
+                    "{}",
+                    format!("Warning: could not verify Wago key ({e}); saving it anyway.")
+                        .color_yellow()
+                );
+            }
+        }
+        config.wago_access_key = Some(wago_key);
+    }
+    println!();
+
+    println!("{}", "Step 3: Addon Directory".color_bold());
 
     match Config::detect_addon_dir() {
         Ok(detected_path) => {
@@ -144,6 +180,18 @@ pub async fn show() -> Result<()> {
         }
     }
 
+    let wago_env = std::env::var("WOWCTL_WAGO_ACCESS_KEY")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    let wago_status = if wago_env.is_some() {
+        "Configured (from environment)".color_green().to_string()
+    } else if config.wago_access_key.is_some() {
+        "Configured".color_green().to_string()
+    } else {
+        "Not set (Wago source disabled)".color_yellow().to_string()
+    };
+    println!("  {}: {}", "Wago access key".color_bold(), wago_status);
+
     match &config.addon_dir {
         Some(dir) => {
             println!(
@@ -206,6 +254,10 @@ pub async fn set(key: &str, value: &str) -> Result<()> {
             config.curseforge_api_key = Some(value.to_string());
             println!("Set CurseForge API key");
         }
+        "wago_access_key" => {
+            config.wago_access_key = Some(value.to_string());
+            println!("Set Wago access key");
+        }
         "color" => {
             let color_value = value.parse::<bool>().map_err(|_| {
                 WowctlError::Config(format!(
@@ -223,7 +275,7 @@ pub async fn set(key: &str, value: &str) -> Result<()> {
         }
         _ => {
             return Err(WowctlError::Config(format!(
-                "Unknown configuration key: '{key}'. Valid keys: addon_dir, curseforge_api_key, color, default_release_channel"
+                "Unknown configuration key: '{key}'. Valid keys: addon_dir, curseforge_api_key, wago_access_key, color, default_release_channel"
             )));
         }
     }

@@ -97,19 +97,20 @@ pub async fn info(addon: &str) -> Result<()> {
         );
     }
 
-    if installed_addon.source == "curseforge" {
-        println!(
-            "  {}: {}",
-            "URL".color_bold(),
-            format!(
-                "https://www.curseforge.com/wow/addons/{}",
-                installed_addon.slug
-            )
-            .color_blue()
-        );
+    if let Some(url) = addon_page_url(&installed_addon.source, &installed_addon.slug) {
+        println!("  {}: {}", "URL".color_bold(), url.color_blue());
     }
 
     Ok(())
+}
+
+/// The web page for an addon on its Source, if the Source is known.
+fn addon_page_url(source: &str, slug: &str) -> Option<String> {
+    match source {
+        "curseforge" => Some(format!("https://www.curseforge.com/wow/addons/{slug}")),
+        "wago" => Some(format!("https://addons.wago.io/addons/{slug}")),
+        _ => None,
+    }
 }
 
 /// Formats an ISO 8601 date string (e.g., "2025-02-15T10:30:00Z") into a
@@ -144,5 +145,18 @@ mod tests {
     #[test]
     fn format_release_date_empty() {
         assert_eq!(format_release_date(""), "");
+    }
+
+    #[test]
+    fn addon_page_url_per_source() {
+        assert_eq!(
+            addon_page_url("curseforge", "weakauras-2"),
+            Some("https://www.curseforge.com/wow/addons/weakauras-2".to_string())
+        );
+        assert_eq!(
+            addon_page_url("wago", "classcodex"),
+            Some("https://addons.wago.io/addons/classcodex".to_string())
+        );
+        assert_eq!(addon_page_url("unknown", "x"), None);
     }
 }
