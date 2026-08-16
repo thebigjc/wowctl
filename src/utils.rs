@@ -9,6 +9,48 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
+/// Reports whether `name` is safe to use as a single path component when
+/// joined onto the addon directory (e.g. `addon_dir.join(name)`).
+///
+/// Addon directory names ultimately come from external, unauthenticated
+/// input — CurseForge's `file.modules[].name` field, or a hand-edited
+/// `registry.toml` — and `Path::join` has surprising behavior for
+/// pathological strings: `""` resolves to `addon_dir` itself (a no-op join),
+/// `".."` walks up to the parent, and an absolute string discards the base
+/// entirely and replaces it. Any of those, fed into `remove_dir_all` or
+/// `rename`, can delete or clobber something far outside the addon
+/// directory. This predicate rejects anything that isn't a single, ordinary
+/// path component, so callers can skip unsafe entries before touching disk.
+pub fn is_safe_dir_name(name: &str) -> bool {
+    if name.trim().is_empty() {
+        return false;
+    }
+    if name == "." || name == ".." {
+        return false;
+    }
+    if name.contains('/') || name.contains('\\') {
+        return false;
+    }
+    // Windows drive prefix (e.g. "C:") — meaningful even without a
+    // following separator, and without the separator it wouldn't be
+    // caught by the checks above.
+    if name.len() >= 2 && name.as_bytes()[1] == b':' {
+        return false;
+    }
+    true
+}
+
+/// Returns a prefix of `s` containing at most `max_chars` characters, always
+/// on a char boundary. Byte-slicing (`&s[..n]`) panics on multi-byte UTF-8
+/// input when `n` doesn't land on a char boundary; strings sourced from
+/// external APIs (release dates, API keys) are not guaranteed to be ASCII.
+pub fn char_safe_prefix(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        Some((byte_idx, _)) => &s[..byte_idx],
+        None => s,
+    }
+}
+
 /// Validates that a path exists and is a directory.
 pub fn validate_addon_dir(path: &Path) -> Result<()> {
     if !path.exists() {
@@ -122,6 +164,13 @@ pub fn move_addon_dirs(temp_dir: &Path, addon_dir: &Path, directories: &[String]
     debug!("move_addon_dirs: directories to move: {:?}", directories);
 
     for dir_name in directories {
+        if !is_safe_dir_name(dir_name) {
+            warn!(
+                "move_addon_dirs: refusing to touch unsafe directory name: {:?}",
+                dir_name
+            );
+            continue;
+        }
         let src = temp_dir.join(dir_name);
         let dest = addon_dir.join(dir_name);
         debug!("move_addon_dirs: processing '{}': src={}, dest={}", dir_name, src.display(), dest.display());
@@ -582,6 +631,13 @@ pub fn backup_addon_dirs(addon_dir: &Path, directories: &[String]) -> Result<Vec
     let mut backed_up = Vec::new();
 
     for dir_name in directories {
+        if !is_safe_dir_name(dir_name) {
+            warn!(
+                "backup_addon_dirs: refusing to touch unsafe directory name: {:?}",
+                dir_name
+            );
+            continue;
+        }
         let original = addon_dir.join(dir_name);
         if !original.exists() {
             debug!("backup_addon_dirs: {} does not exist, skipping", original.display());
@@ -610,6 +666,13 @@ pub fn backup_addon_dirs(addon_dir: &Path, directories: &[String]) -> Result<Vec
 /// Removes any partially-installed new directories first.
 pub fn restore_addon_dirs(addon_dir: &Path, backed_up_dirs: &[String]) {
     for dir_name in backed_up_dirs {
+        if !is_safe_dir_name(dir_name) {
+            warn!(
+                "restore_addon_dirs: refusing to touch unsafe directory name: {:?}",
+                dir_name
+            );
+            continue;
+        }
         let original = addon_dir.join(dir_name);
         let backup = addon_dir.join(format!("{dir_name}{BACKUP_SUFFIX}"));
 
@@ -641,6 +704,13 @@ pub fn restore_addon_dirs(addon_dir: &Path, backed_up_dirs: &[String]) {
 /// Removes `-wowctl-bak` backup directories after a successful update.
 pub fn cleanup_backup_dirs(addon_dir: &Path, backed_up_dirs: &[String]) {
     for dir_name in backed_up_dirs {
+        if !is_safe_dir_name(dir_name) {
+            warn!(
+                "cleanup_backup_dirs: refusing to touch unsafe directory name: {:?}",
+                dir_name
+            );
+            continue;
+        }
         let backup = addon_dir.join(format!("{dir_name}{BACKUP_SUFFIX}"));
         if backup.exists() {
             if let Err(e) = fs::remove_dir_all(&backup) {
@@ -697,6 +767,60 @@ pub fn check_disk_space(path: &Path, required_bytes: u64) -> Result<()> {
 mod tests {
     use super::*;
     use std::fs;
+
+    // --- is_safe_dir_name tests ---
+
+    #[test]
+    fn is_safe_dir_name_rejects_empty_and_whitespace() {
+        assert!(!is_safe_dir_name(""));
+        assert!(!is_safe_dir_name("   "));
+        assert!(!is_safe_dir_name("\t"));
+    }
+
+    #[test]
+    fn is_safe_dir_name_rejects_dot_and_dotdot() {
+        assert!(!is_safe_dir_name("."));
+        assert!(!is_safe_dir_name(".."));
+    }
+
+    #[test]
+    fn is_safe_dir_name_rejects_path_separators() {
+        assert!(!is_safe_dir_name("a/b"));
+        assert!(!is_safe_dir_name("a\\b"));
+    }
+
+    #[test]
+    fn is_safe_dir_name_rejects_absolute_paths() {
+        assert!(!is_safe_dir_name("/etc"));
+        assert!(!is_safe_dir_name("C:\\Windows"));
+    }
+
+    #[test]
+    fn is_safe_dir_name_accepts_ordinary_names() {
+        assert!(is_safe_dir_name("WeakAuras"));
+        assert!(is_safe_dir_name("Deadly Boss Mods"));
+        assert!(is_safe_dir_name("MyAddon_Options"));
+    }
+
+    // --- char_safe_prefix tests ---
+
+    #[test]
+    fn char_safe_prefix_ascii() {
+        assert_eq!(char_safe_prefix("2025-02-15T10:30:00Z", 10), "2025-02-15");
+    }
+
+    #[test]
+    fn char_safe_prefix_shorter_than_max() {
+        assert_eq!(char_safe_prefix("abc", 10), "abc");
+    }
+
+    #[test]
+    fn char_safe_prefix_does_not_split_multibyte_char() {
+        // The 10th character is a multi-byte '€'; byte-slicing at offset 10
+        // would panic. This must return the whole character intact.
+        let s = "1234-06-1€T00:00:00Z";
+        assert_eq!(char_safe_prefix(s, 10), "1234-06-1€");
+    }
 
     fn create_dir_with_file(base: &Path, dir_name: &str, file_name: &str, content: &str) {
         let dir = base.join(dir_name);

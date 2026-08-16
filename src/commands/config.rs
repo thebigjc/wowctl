@@ -286,12 +286,50 @@ pub async fn set(key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Masks an API key for display, showing only its first/last 4 characters.
+///
+/// Operates on `chars()` rather than byte offsets: keys are arbitrary
+/// user-supplied strings and byte-slicing (`&key[..4]`) panics on
+/// non-ASCII input that doesn't land on a UTF-8 char boundary.
 fn mask_api_key(key: &str) -> String {
-    if key.len() <= 8 {
-        return "*".repeat(key.len());
+    let char_count = key.chars().count();
+    if char_count <= 8 {
+        return "*".repeat(char_count);
     }
 
-    let prefix = &key[..4];
-    let suffix = &key[key.len() - 4..];
+    let prefix: String = key.chars().take(4).collect();
+    let suffix: String = {
+        let mut rev: Vec<char> = key.chars().rev().take(4).collect();
+        rev.reverse();
+        rev.into_iter().collect()
+    };
     format!("{prefix}...{suffix}")
+}
+
+#[cfg(test)]
+mod mask_api_key_tests {
+    use super::mask_api_key;
+
+    #[test]
+    fn mask_api_key_ascii_normal() {
+        assert_eq!(mask_api_key("1234567890abcdef"), "1234...cdef");
+    }
+
+    #[test]
+    fn mask_api_key_short_key_is_all_stars() {
+        assert_eq!(mask_api_key("abc"), "***");
+        assert_eq!(mask_api_key("12345678"), "********");
+    }
+
+    #[test]
+    fn mask_api_key_empty() {
+        assert_eq!(mask_api_key(""), "");
+    }
+
+    #[test]
+    fn mask_api_key_non_ascii_does_not_panic() {
+        // Reproduces the byte-index panic: '€' is a 3-byte UTF-8 char, so
+        // byte-slicing at offset 4 would land mid-character.
+        assert_eq!(mask_api_key("abc€defghij"), "abc€...ghij");
+    }
 }

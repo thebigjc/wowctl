@@ -176,7 +176,20 @@ fn init_logging(verbose: bool, debug: bool) {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    if let Err(e) = run().await {
+        // Print the friendly Display message (WowctlError's #[error(...)]
+        // text), not Rust's default Debug-based Termination output, which
+        // would show `Error: MissingApiKey("...")` instead of
+        // `Error: Missing API key: ...`. This is the first thing a new user
+        // sees when setup goes wrong, so it needs to read as a message, not
+        // a struct dump.
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     init_logging(cli.verbose, cli.debug);

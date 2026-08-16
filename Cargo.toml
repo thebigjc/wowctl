@@ -1,8 +1,13 @@
 [package]
 name = "wowctl"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
+license = "MIT"
+description = "A command-line addon manager for World of Warcraft, supporting CurseForge and Wago Addons."
+repository = "https://github.com/thebigjc/wowctl"
+keywords = ["wow", "world-of-warcraft", "addon", "addon-manager", "cli"]
+categories = ["command-line-utilities", "games"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -15,7 +20,6 @@ zip = "2.2"
 dirs = "5.0"
 owo-colors = { version = "4.1", features = ["supports-colors"] }
 dialoguer = "0.11"
-anyhow = "1.0"
 thiserror = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

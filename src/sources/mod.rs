@@ -209,6 +209,17 @@ pub trait AddonSource: Send + Sync {
     }
 }
 
+/// Strips the query string from a URL before it's shown to the user.
+///
+/// Wago download links carry a signed `?link=<token>` parameter (and other
+/// sources may carry their own tokens); leaking that into a terminal,
+/// screenshot, or pasted bug report would hand over a working, if
+/// time-limited, download credential. Keeps scheme/host/path, drops
+/// everything from the first `?` onward.
+fn redact_url_query(url: &str) -> &str {
+    url.split('?').next().unwrap_or(url)
+}
+
 /// Downloads a zip file via the given prepared request, validating that the
 /// response is a real zip archive (not an HTML error page) before writing it
 /// to `destination`. Shared by all Sources so download quality is identical.
@@ -246,7 +257,8 @@ pub(crate) async fn download_zip(
     // Reject HTML error pages that CDNs sometimes serve with 200 OK
     if content_type.contains("text/html") || content_type.contains("text/plain") {
         return Err(WowctlError::Network(format!(
-            "Server returned {content_type} instead of a zip file — the download URL may be invalid: {download_url}"
+            "Server returned {content_type} instead of a zip file — the download URL may be invalid: {}",
+            redact_url_query(download_url)
         )));
     }
 
@@ -272,7 +284,7 @@ pub(crate) async fn download_zip(
              The server may have returned an error page. URL: {}",
             bytes.len(),
             &bytes[..bytes.len().min(4)],
-            download_url
+            redact_url_query(download_url)
         )));
     }
 
@@ -420,6 +432,60 @@ pub fn build_source(kind: SourceKind, config: &Config) -> Result<AnySource> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- redact_url_query tests ---
+
+    #[test]
+    fn redact_url_query_strips_query_string() {
+        assert_eq!(
+            redact_url_query("https://addons.wago.io/files/abc.zip?link=super-secret-token"),
+            "https://addons.wago.io/files/abc.zip"
+        );
+    }
+
+    #[test]
+    fn redact_url_query_no_query_string_unchanged() {
+        assert_eq!(
+            redact_url_query("https://edge.forgecdn.net/files/1/2/Addon.zip"),
+            "https://edge.forgecdn.net/files/1/2/Addon.zip"
+        );
+    }
+
+    #[tokio::test]
+    async fn download_zip_redacts_query_string_on_content_type_mismatch() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/files/broken.zip"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string("<html>error</html>"),
+            )
+            .mount(&server)
+            .await;
+
+        let url = format!(
+            "{}/files/broken.zip?link=super-secret-token",
+            server.uri()
+        );
+        let client = reqwest::Client::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("broken.zip");
+
+        let err = download_zip(client.get(&url), &url, &dest)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+
+        assert!(
+            !msg.contains("super-secret-token"),
+            "signed token leaked into error message: {msg}"
+        );
+        assert!(
+            msg.contains("/files/broken.zip"),
+            "expected redacted URL (path retained) in error: {msg}"
+        );
+    }
 
     #[test]
     fn bare_slug_defaults_to_curseforge() {
