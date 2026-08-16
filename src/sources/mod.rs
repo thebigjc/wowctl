@@ -388,9 +388,12 @@ impl AddonSource for AnySource {
 }
 
 /// Constructs the client for a Source, resolving its credentials from config.
-/// A missing Wago key is a MissingApiKey error — callers that want to treat
-/// Wago as "unconfigured" (merged search, update) check
-/// `config.get_wago_access_key().is_some()` before calling this.
+/// A missing Wago key is a MissingApiKey error. Callers handle that error in
+/// one of three ways: propagate it as a guided hard error (e.g. `wowctl init`
+/// with a Wago source selected); pre-check `config.get_wago_access_key().is_some()`
+/// before calling, so the Err path is never hit (merged `search`); or call
+/// this and catch the Err per group/source to degrade gracefully, skipping
+/// just that source while others proceed (`update`).
 pub fn build_source(kind: SourceKind, config: &Config) -> Result<AnySource> {
     match kind {
         SourceKind::CurseForge => {

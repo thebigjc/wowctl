@@ -102,6 +102,7 @@ pub async fn update(
     }
 
     let (groups, unknown) = group_by_source(&addons_to_check);
+    let mut any_skipped = !unknown.is_empty();
     for addon in &unknown {
         println!(
             "  {} Skipping {}: unknown source '{}'",
@@ -130,6 +131,7 @@ pub async fn update(
                     kind,
                     e
                 );
+                any_skipped = true;
                 continue;
             }
         };
@@ -214,7 +216,11 @@ pub async fn update(
     }
 
     if updates.is_empty() {
-        println!("{}", "All addons are up to date.".color_green());
+        if any_skipped {
+            println!("{}", "Remaining addons are up to date.".color_green());
+        } else {
+            println!("{}", "All addons are up to date.".color_green());
+        }
         return Ok(());
     }
 

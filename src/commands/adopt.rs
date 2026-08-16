@@ -477,6 +477,8 @@ async fn adopt_all(
             game_versions: proposal.game_versions,
             released_at: proposal.released_at,
             auto_update: None,
+            // Adopt is CurseForge-only by design (plan/issue #8), which has no
+            // external release id concept; a future Wago-adopt effort must revisit.
             external_release_id: None,
         };
 
