@@ -1,3 +1,14 @@
+> **Status: implemented, historical record.** This plan was fully executed;
+> Wago Addons support shipped in **v0.4.0**. The unchecked `- [ ]` boxes
+> below reflect the plan as originally written, not remaining work — this
+> document is kept as a record of the implementation process, not a TODO
+> list. The live Wago API contract differed from this plan's assumptions in
+> a few places (discovered during implementation); `AGENTS.md`'s Wago
+> section holds the validated, current contract. For the design rationale
+> see [`docs/adr/0001-wago-unofficial-external-api.md`](../../adr/0001-wago-unofficial-external-api.md)
+> and for the current architecture/API notes see
+> [`AGENTS.md`](../../../AGENTS.md).
+
 # Wago Addons Source Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

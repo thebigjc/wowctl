@@ -5,7 +5,7 @@ Thank you for your interest in contributing to wowctl! This document provides gu
 ## Getting Started
 
 1. Fork the repository
-2. Clone your fork: `git clone https://github.com/yourusername/wowctl.git`
+2. Clone your fork: `git clone https://github.com/<your-username>/wowctl.git`
 3. Create a feature branch: `git checkout -b feature/your-feature-name`
 4. Make your changes
 5. Test your changes
@@ -58,6 +58,9 @@ cargo run -- --verbose search "deadly boss mods"
 - Ensure existing tests pass
 - Test on both macOS and Windows if possible
 - Test error cases and edge conditions
+- CI (`.github/workflows/ci.yml`) only runs on macOS and Windows runners. If
+  you're developing on Linux, `cargo test` and `cargo clippy -- -D warnings`
+  won't be checked for you automatically — run them locally before opening a PR.
 
 ## Pull Request Guidelines
 
@@ -71,14 +74,13 @@ cargo run -- --verbose search "deadly boss mods"
 
 ### High Priority
 
-- Additional addon sources (WoWInterface, Wago, GitHub releases)
-- Improved color control (fix --no-color flag)
+- Additional addon sources (WoWInterface, GitHub releases)
 - Comprehensive test suite
-- Windows testing and bug fixes
+- Windows and Linux testing and bug fixes
+- Prebuilt Linux binary in the release workflow
 
 ### Medium Priority
 
-- `adopt` command implementation (Phase 2)
 - Version pinning feature
 - Backup/restore of SavedVariables
 - Export/import addon lists
