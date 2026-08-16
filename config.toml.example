@@ -11,6 +11,12 @@
 # You can also set this via the WOWCTL_CURSEFORGE_API_KEY environment variable
 # curseforge_api_key = "your-api-key-here"
 
+# Wago Addons personal access key (optional). Needed only for Wago-exclusive
+# addons ('wowctl install wago:<slug>'). Keys come from
+# https://addons.wago.io/patreon and require the 'Wago Addons Supporter'
+# Patreon tier (~$3/month). Can also be set via WOWCTL_WAGO_ACCESS_KEY.
+# wago_access_key = "your-wago-access-key"
+
 # Enable or disable colored output
 # You can also disable colors with --no-color flag or NO_COLOR environment variable
 color = true
