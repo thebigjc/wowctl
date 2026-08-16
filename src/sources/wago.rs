@@ -5,20 +5,25 @@
 //! included). Reference implementation: WowUp's wago-addon-provider.ts.
 //! See ADR-0001 for why this API and its constraints.
 
-use crate::addon::{AddonInfo, ReleaseChannel, VersionInfo};
+use crate::addon::{AddonInfo, ReleaseChannel, SearchResult, VersionInfo};
+use crate::circuit_breaker::CircuitBreaker;
 use crate::error::{Result, WowctlError};
+use crate::sources::{AddonSource, BatchVersionCheck};
+use reqwest::Client;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use tracing::{debug, warn};
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct WagoSearchResponse {
     #[serde(default)]
     data: Vec<WagoSearchItem>,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct WagoSearchItem {
     id: String,
     #[serde(default)]
@@ -32,12 +37,14 @@ struct WagoSearchItem {
     website_url: Option<String>,
     #[serde(default)]
     is_hidden_from_external: bool,
+    /// Wire-format documentation field; search results don't carry the
+    /// release we'd download (that comes from the detail endpoint).
     #[serde(default)]
+    #[allow(dead_code)]
     releases: WagoReleases,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct WagoAddonDetail {
     id: String,
     slug: String,
@@ -46,7 +53,10 @@ struct WagoAddonDetail {
     summary: Option<String>,
     #[serde(default)]
     download_count: Option<f64>,
+    /// Wire-format documentation field; detail responses already carry
+    /// `slug` directly, so we never need the website URL fallback here.
     #[serde(default)]
+    #[allow(dead_code)]
     website_url: Option<String>,
     #[serde(default)]
     is_hidden_from_external: bool,
@@ -56,7 +66,6 @@ struct WagoAddonDetail {
 
 /// Releases keyed by Wago stability tier. Tiers map 1:1 onto ReleaseChannel.
 #[derive(Debug, Default, Deserialize)]
-#[allow(dead_code)]
 struct WagoReleases {
     #[serde(default)]
     stable: Option<WagoRelease>,
@@ -67,7 +76,6 @@ struct WagoReleases {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 struct WagoRelease {
     label: String,
     #[serde(default)]
@@ -77,37 +85,39 @@ struct WagoRelease {
     /// Wago's monotonically-increasing release marker; our external_release_id.
     #[serde(default)]
     logical_timestamp: Option<u64>,
+    /// Wire-format documentation field; we don't branch on it (releases are
+    /// already keyed by stability tier).
     #[serde(default)]
+    #[allow(dead_code)]
     stability: Option<String>,
     #[serde(default)]
     supported_retail_patch: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
-#[allow(dead_code)]
 struct WagoRecentsRequest<'a> {
     game_version: &'a str,
     addons: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct WagoRecentsResponse {
     #[serde(default)]
     addons: HashMap<String, WagoRecentsEntry>,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct WagoRecentsEntry {
+    /// Wire-format documentation field; the response is already keyed by
+    /// addon ID in the surrounding map.
     #[serde(default)]
+    #[allow(dead_code)]
     id: Option<String>,
     #[serde(default)]
     recent_releases: WagoReleases,
 }
 
 /// Maps a ReleaseChannel to Wago's stability query-parameter value.
-#[allow(dead_code)]
 fn stability_param(channel: ReleaseChannel) -> &'static str {
     match channel {
         ReleaseChannel::Stable => "stable",
@@ -118,7 +128,6 @@ fn stability_param(channel: ReleaseChannel) -> &'static str {
 
 /// Picks the newest release the channel allows (stable ⊆ beta ⊆ alpha),
 /// newest judged by logical_timestamp.
-#[allow(dead_code)]
 fn select_release(releases: &WagoReleases, channel: ReleaseChannel) -> Option<&WagoRelease> {
     let mut candidates: Vec<&WagoRelease> = Vec::new();
     if let Some(r) = &releases.stable {
@@ -141,7 +150,6 @@ fn select_release(releases: &WagoReleases, channel: ReleaseChannel) -> Option<&W
 
 /// Resolves an item's Slug: explicit field first, else the last path segment
 /// of its website URL.
-#[allow(dead_code)]
 fn item_slug(item: &WagoSearchItem) -> Option<String> {
     if let Some(s) = &item.slug {
         return Some(s.clone());
@@ -153,7 +161,6 @@ fn item_slug(item: &WagoSearchItem) -> Option<String> {
         .map(str::to_string)
 }
 
-#[allow(dead_code)]
 fn to_addon_info(item: &WagoSearchItem) -> AddonInfo {
     AddonInfo {
         id: item.id.clone(),
@@ -165,7 +172,6 @@ fn to_addon_info(item: &WagoSearchItem) -> AddonInfo {
     }
 }
 
-#[allow(dead_code)]
 fn to_version_info(release: &WagoRelease, file_name: String) -> Result<VersionInfo> {
     let download_url = release.download_link.clone().ok_or_else(|| {
         WowctlError::Source(format!(
@@ -191,6 +197,308 @@ fn to_version_info(release: &WagoRelease, file_name: String) -> Result<VersionIn
         dependencies: vec![],
         modules: vec![],
     })
+}
+
+const WAGO_API_BASE: &str = "https://addons.wago.io/api/external";
+const GAME_VERSION_RETAIL: &str = "retail";
+const HTTP_TIMEOUT_SECS: u64 = 60;
+const MAX_RETRIES: u32 = 3;
+const INITIAL_BACKOFF_MS: u64 = 1000;
+
+/// Wago Addons source implementation. Every call carries Bearer auth.
+pub struct WagoSource {
+    client: Client,
+    access_key: String,
+    api_base: String,
+    circuit_breaker: CircuitBreaker,
+}
+
+/// The 401 error users see; points at where keys come from (ADR-0001).
+fn unauthorized_error() -> WowctlError {
+    WowctlError::Unauthorized(
+        "Wago rejected the access key (HTTP 401). Personal access keys come from \
+         https://addons.wago.io/patreon and require the 'Wago Addons Supporter' \
+         Patreon tier ($3/month). Update WOWCTL_WAGO_ACCESS_KEY or run \
+         'wowctl config set wago_access_key <key>'."
+            .to_string(),
+    )
+}
+
+impl WagoSource {
+    /// Creates a new Wago source with the provided personal access key.
+    pub fn new(access_key: String) -> Result<Self> {
+        Self::with_base_url(access_key, WAGO_API_BASE.to_string())
+    }
+
+    /// Creates a Wago source pointed at a custom API base URL (tests).
+    pub fn with_base_url(access_key: String, api_base: String) -> Result<Self> {
+        let client = Client::builder()
+            .user_agent(format!("wowctl/{}", env!("WOWCTL_VERSION")))
+            .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+            .build()
+            .map_err(|e| WowctlError::Network(format!("Failed to create HTTP client: {e}")))?;
+
+        Ok(Self {
+            client,
+            access_key,
+            api_base,
+            circuit_breaker: CircuitBreaker::new(),
+        })
+    }
+
+    /// Records a request outcome with the circuit breaker. 404s and auth
+    /// failures are the caller's problem, not an API outage.
+    fn record_circuit_breaker_result<T>(&self, result: &Result<T>) {
+        match result {
+            Ok(_) => self.circuit_breaker.record_success(),
+            Err(WowctlError::AddonNotFound(_))
+            | Err(WowctlError::Unauthorized(_))
+            | Err(WowctlError::CircuitBreakerOpen) => {}
+            Err(_) => self.circuit_breaker.record_failure(),
+        }
+    }
+
+    /// Executes a request built by `build` with retry/backoff, mapping Wago's
+    /// status codes onto wowctl errors. Responses deserialize bare (no `data`
+    /// wrapper except where the model itself declares one).
+    async fn execute_with_retry<T: DeserializeOwned>(
+        &self,
+        build: impl Fn() -> reqwest::RequestBuilder,
+    ) -> Result<T> {
+        if !self.circuit_breaker.allow_request() {
+            return Err(WowctlError::CircuitBreakerOpen);
+        }
+        let result = self.execute_with_retry_inner(build).await;
+        self.record_circuit_breaker_result(&result);
+        result
+    }
+
+    async fn execute_with_retry_inner<T: DeserializeOwned>(
+        &self,
+        build: impl Fn() -> reqwest::RequestBuilder,
+    ) -> Result<T> {
+        let mut attempts = 0;
+        let mut backoff_ms = INITIAL_BACKOFF_MS;
+
+        loop {
+            attempts += 1;
+            match build()
+                .bearer_auth(&self.access_key)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    let status = response.status();
+                    debug!("Wago response status: {}", status);
+
+                    if status.is_success() {
+                        return response.json::<T>().await.map_err(|e| {
+                            WowctlError::Source(format!("Failed to parse Wago API response: {e}"))
+                        });
+                    } else if status.as_u16() == 401 {
+                        return Err(unauthorized_error());
+                    } else if status.as_u16() == 404 {
+                        return Err(WowctlError::AddonNotFound(
+                            "Addon not found on Wago".to_string(),
+                        ));
+                    } else if status.as_u16() == 429 {
+                        if attempts >= MAX_RETRIES {
+                            return Err(WowctlError::Network(
+                                "Rate limited by Wago API after multiple retries".to_string(),
+                            ));
+                        }
+                        warn!("Rate limited by Wago API, retrying with backoff...");
+                    } else {
+                        let error_text = response
+                            .text()
+                            .await
+                            .unwrap_or_else(|_| "Unknown error".to_string());
+                        return Err(WowctlError::Source(format!(
+                            "Wago API error ({status}): {error_text}"
+                        )));
+                    }
+                }
+                Err(e) => {
+                    warn!("Network error: {}", e);
+                    if attempts >= MAX_RETRIES {
+                        return Err(WowctlError::Network(format!(
+                            "Failed to connect to Wago API after {MAX_RETRIES} attempts: {e}"
+                        )));
+                    }
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+            backoff_ms *= 2;
+        }
+    }
+
+    /// Fetches addon detail by Wago Addon ID (or slug — the endpoint accepts
+    /// both), enforcing is_hidden_from_external.
+    async fn get_detail(&self, id_or_slug: &str) -> Result<WagoAddonDetail> {
+        let url = format!("{}/addons/{}", self.api_base, id_or_slug);
+        let detail: WagoAddonDetail = self
+            .execute_with_retry(|| {
+                self.client
+                    .get(&url)
+                    .query(&[("game_version", GAME_VERSION_RETAIL)])
+            })
+            .await?;
+        if detail.is_hidden_from_external {
+            return Err(WowctlError::AddonNotFound(format!(
+                "Addon '{}' is hidden from external clients by its author",
+                detail.slug
+            )));
+        }
+        Ok(detail)
+    }
+
+    async fn search_items(&self, query: &str) -> Result<Vec<WagoSearchItem>> {
+        let url = format!("{}/addons/_search", self.api_base);
+        let response: WagoSearchResponse = self
+            .execute_with_retry(|| {
+                self.client.get(&url).query(&[
+                    ("query", query),
+                    ("game_version", GAME_VERSION_RETAIL),
+                    ("stability", stability_param(ReleaseChannel::Stable)),
+                ])
+            })
+            .await?;
+        Ok(response
+            .data
+            .into_iter()
+            .filter(|item| !item.is_hidden_from_external)
+            .collect())
+    }
+}
+
+fn detail_to_addon_info(detail: &WagoAddonDetail) -> AddonInfo {
+    AddonInfo {
+        id: detail.id.clone(),
+        name: detail.display_name.clone(),
+        slug: detail.slug.clone(),
+        description: detail.summary.clone(),
+        download_count: detail.download_count.map(|d| d as u64),
+        source: "wago".to_string(),
+    }
+}
+
+impl AddonSource for WagoSource {
+    async fn search(&self, query: &str, _page: Option<u32>) -> Result<SearchResult> {
+        debug!("Searching Wago for: {}", query);
+        let items = self.search_items(query).await?;
+        let addons: Vec<AddonInfo> = items.iter().map(to_addon_info).collect();
+        let count = addons.len() as u32;
+        // Wago's search pagination is undocumented; treat results as one page.
+        Ok(SearchResult {
+            addons,
+            page: 1,
+            page_size: count,
+            total_count: count,
+        })
+    }
+
+    async fn get_latest_version(
+        &self,
+        addon_id: &str,
+        channel: ReleaseChannel,
+    ) -> Result<VersionInfo> {
+        debug!(
+            "Getting latest Wago version for {} (channel: {})",
+            addon_id, channel
+        );
+        let detail = self.get_detail(addon_id).await?;
+        let release = select_release(&detail.recent_releases, channel).ok_or_else(|| {
+            WowctlError::Source(format!(
+                "No {channel} release found on Wago for '{}'",
+                detail.slug
+            ))
+        })?;
+        to_version_info(release, format!("{}.zip", detail.slug))
+    }
+
+    async fn download(&self, download_url: &str, destination: &Path) -> Result<PathBuf> {
+        // Wago download links are signed and expiring; the Bearer token must
+        // accompany the request (ADR-0001).
+        crate::sources::download_zip(
+            self.client.get(download_url).bearer_auth(&self.access_key),
+            download_url,
+            destination,
+        )
+        .await
+    }
+
+    async fn resolve_dependencies(
+        &self,
+        _addon_id: &str,
+        _channel: ReleaseChannel,
+    ) -> Result<Vec<String>> {
+        // The Wago API exposes no dependency data we rely on (issue #8).
+        Ok(vec![])
+    }
+
+    async fn get_addon_by_slug(&self, slug: &str) -> Result<AddonInfo> {
+        debug!("Looking up Wago addon by slug: {}", slug);
+        let items = self.search_items(slug).await?;
+        if let Some(item) = items.iter().find(|i| item_slug(i).as_deref() == Some(slug)) {
+            return Ok(to_addon_info(item));
+        }
+        // Fallback: the detail endpoint also resolves slugs directly.
+        match self.get_detail(slug).await {
+            Ok(detail) if detail.slug == slug => Ok(detail_to_addon_info(&detail)),
+            Ok(_) | Err(WowctlError::AddonNotFound(_)) => Err(WowctlError::AddonNotFound(
+                format!("Addon '{slug}' not found on Wago"),
+            )),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn get_addon_info_by_id(&self, addon_id: &str) -> Result<AddonInfo> {
+        let detail = self.get_detail(addon_id).await?;
+        Ok(detail_to_addon_info(&detail))
+    }
+
+    async fn get_latest_versions_batch(
+        &self,
+        addon_ids: &[&str],
+        channel: ReleaseChannel,
+    ) -> Result<HashMap<String, BatchVersionCheck>> {
+        if addon_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        debug!("Batch checking {} Wago addon(s)", addon_ids.len());
+        let url = format!("{}/addons/_recents", self.api_base);
+        let body = WagoRecentsRequest {
+            game_version: GAME_VERSION_RETAIL,
+            addons: addon_ids.iter().map(|s| s.to_string()).collect(),
+        };
+        let response: WagoRecentsResponse = self
+            .execute_with_retry(|| self.client.post(&url).json(&body))
+            .await?;
+
+        let mut results = HashMap::new();
+        for (id, entry) in &response.addons {
+            if let Some(release) = select_release(&entry.recent_releases, channel) {
+                results.insert(
+                    id.clone(),
+                    BatchVersionCheck {
+                        addon_id: id.clone(),
+                        file_id: None,
+                        external_release_id: release.logical_timestamp.map(|t| t.to_string()),
+                        version: release.label.clone(),
+                        display_name: release.label.clone(),
+                        released_at: release.created_at.clone().unwrap_or_default(),
+                    },
+                );
+            }
+        }
+        debug!(
+            "Wago batch check returned {} of {} addon(s)",
+            results.len(),
+            addon_ids.len()
+        );
+        Ok(results)
+    }
 }
 
 #[cfg(test)]
