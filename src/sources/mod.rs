@@ -4,6 +4,7 @@
 //! This allows wowctl to support multiple addon sources with a unified interface.
 
 pub mod curseforge;
+pub mod wago;
 
 use crate::addon::{AddonInfo, ReleaseChannel, SearchResult, VersionInfo};
 use crate::error::{Result, WowctlError};
