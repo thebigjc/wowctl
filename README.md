@@ -93,6 +93,34 @@ wowctl remove deadly-boss-mods
 
 Orphaned dependencies will be detected and you'll be prompted to remove them.
 
+## Wago Addons support
+
+wowctl can install and update addons from [Wago Addons](https://addons.wago.io)
+alongside CurseForge:
+
+    wowctl install wago:classcodex
+    wowctl install https://addons.wago.io/addons/classcodex
+    wowctl search classcodex --source wago
+
+Bare slugs and CurseForge URLs keep meaning CurseForge; an explicit
+`curseforge:` prefix is also accepted. Each addon remembers the source it was
+installed from, and `wowctl update` checks each addon against its own source.
+
+### Access key required
+
+Wago has no public consumer API. wowctl uses the same unofficial API as other
+addon managers (see `docs/adr/0001-wago-unofficial-external-api.md`), which
+requires a **personal access key** from <https://addons.wago.io/patreon> —
+the key is a benefit of the "Wago Addons Supporter" Patreon tier (~$3/month).
+
+Set the key via the `WOWCTL_WAGO_ACCESS_KEY` environment variable or
+`wowctl config set wago_access_key <key>` (env wins). Without a key, Wago is
+simply skipped in merged search, and explicit `wago:` requests explain what's
+missing.
+
+> **Unofficial API**: the Wago endpoint is undocumented and may change or be
+> revoked without notice. Wago support is best-effort.
+
 ## Commands
 
 ### `wowctl config`
