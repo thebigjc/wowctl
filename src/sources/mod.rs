@@ -7,6 +7,7 @@ pub mod curseforge;
 
 use crate::addon::{AddonInfo, ReleaseChannel, SearchResult, VersionInfo};
 use crate::error::{Result, WowctlError};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -96,6 +97,31 @@ fn parse_addon_url(url: &str) -> Result<(SourceKind, String)> {
     )))
 }
 
+/// Lightweight version info from a batch mod lookup, sufficient for update detection.
+#[derive(Debug)]
+pub struct BatchVersionCheck {
+    pub addon_id: String,
+    pub file_id: Option<u32>,
+    pub external_release_id: Option<String>,
+    pub version: String,
+    pub display_name: String,
+    pub released_at: String,
+}
+
+impl BatchVersionCheck {
+    /// Builds a batch-check entry from a full VersionInfo.
+    pub fn from_version_info(addon_id: &str, v: &VersionInfo) -> Self {
+        Self {
+            addon_id: addon_id.to_string(),
+            file_id: v.file_id,
+            external_release_id: v.external_release_id.clone(),
+            version: v.version.clone(),
+            display_name: v.display_name.clone(),
+            released_at: v.released_at.clone(),
+        }
+    }
+}
+
 /// Trait for addon sources. Implementations provide access to addon repositories.
 pub trait AddonSource: Send + Sync {
     /// Searches for addons matching the query, with optional pagination (1-indexed page number).
@@ -131,6 +157,54 @@ pub trait AddonSource: Send + Sync {
         &self,
         slug: &str,
     ) -> impl std::future::Future<Output = Result<AddonInfo>> + Send;
+
+    /// Gets addon information by its Source-assigned Addon ID.
+    fn get_addon_info_by_id(
+        &self,
+        addon_id: &str,
+    ) -> impl std::future::Future<Output = Result<AddonInfo>> + Send;
+
+    /// Batch check of the latest version for many addons, keyed by Addon ID.
+    /// Sources with a batch endpoint should override; the default loops the
+    /// single-addon check and skips (with a debug log) addons that fail.
+    fn get_latest_versions_batch(
+        &self,
+        addon_ids: &[&str],
+        channel: ReleaseChannel,
+    ) -> impl std::future::Future<Output = Result<HashMap<String, BatchVersionCheck>>> + Send
+    {
+        async move {
+            let mut results = HashMap::new();
+            for id in addon_ids {
+                match self.get_latest_version(id, channel).await {
+                    Ok(v) => {
+                        results.insert(
+                            id.to_string(),
+                            BatchVersionCheck::from_version_info(id, &v),
+                        );
+                    }
+                    Err(e) => {
+                        tracing::debug!("Batch version check failed for {}: {}", id, e);
+                    }
+                }
+            }
+            Ok(results)
+        }
+    }
+
+    /// Batch fetch of AddonInfo by Addon ID. Default loops get_addon_info_by_id.
+    fn get_addon_infos_batch(
+        &self,
+        addon_ids: &[String],
+    ) -> impl std::future::Future<Output = Result<Vec<AddonInfo>>> + Send {
+        async move {
+            let mut infos = Vec::new();
+            for id in addon_ids {
+                infos.push(self.get_addon_info_by_id(id).await?);
+            }
+            Ok(infos)
+        }
+    }
 }
 
 /// Downloads a zip file via the given prepared request, validating that the

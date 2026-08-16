@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::error::{Result, WowctlError};
 use crate::registry::Registry;
 use crate::sources::AddonSource;
+use crate::sources::BatchVersionCheck;
 use crate::sources::curseforge::CurseForgeSource;
 use crate::utils::{
     backup_addon_dirs, check_disk_space, cleanup_backup_dirs, cleanup_temp_dir,
@@ -403,10 +404,8 @@ async fn check_updates_sequential(
             .await
         {
             Ok(version_info) => {
-                let check = crate::sources::curseforge::BatchVersionCheck::from_version_info(
-                    &installed.addon_id,
-                    &version_info,
-                );
+                let check =
+                    BatchVersionCheck::from_version_info(&installed.addon_id, &version_info);
                 if is_update_available(installed, &check) {
                     updates.push(UpdateInfo {
                         slug: installed.slug.clone(),
@@ -435,7 +434,7 @@ async fn check_updates_sequential(
 /// file ID (CurseForge), then the version string.
 fn is_update_available(
     installed: &InstalledAddon,
-    latest: &crate::sources::curseforge::BatchVersionCheck,
+    latest: &BatchVersionCheck,
 ) -> bool {
     match (
         installed.external_release_id.as_deref(),
@@ -543,7 +542,6 @@ async fn refresh_stale_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sources::curseforge::BatchVersionCheck;
 
     fn make_installed(
         file_id: Option<u32>,
