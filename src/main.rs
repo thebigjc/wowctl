@@ -85,6 +85,9 @@ enum Commands {
 
         #[arg(long, help = "Page number (default: 1)")]
         page: Option<u32>,
+
+        #[arg(long, value_enum, help = "Limit search to one source: curseforge or wago")]
+        source: Option<wowctl::sources::SourceKind>,
     },
 
     #[command(about = "Show detailed addon information")]
@@ -229,7 +232,9 @@ async fn main() -> Result<()> {
             };
             wowctl::commands::list::list(filter).await
         }
-        Commands::Search { query, page } => wowctl::commands::search::search(&query, page).await,
+        Commands::Search { query, page, source } => {
+            wowctl::commands::search::search(&query, page, source).await
+        }
         Commands::Info { addon } => wowctl::commands::info::info(&addon).await,
         Commands::Adopt {
             addon_folder,
