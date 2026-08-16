@@ -7,6 +7,7 @@ pub mod curseforge;
 pub mod wago;
 
 use crate::addon::{AddonInfo, ReleaseChannel, SearchResult, VersionInfo};
+use crate::config::Config;
 use crate::error::{Result, WowctlError};
 use std::collections::HashMap;
 use std::fmt;
@@ -288,6 +289,131 @@ pub(crate) async fn download_zip(
     Ok(destination.to_path_buf())
 }
 
+/// A concrete Source behind enum dispatch. The AddonSource trait's async
+/// methods (RPIT-in-trait) are not dyn-compatible, so commands hold this
+/// enum instead of a trait object.
+pub enum AnySource {
+    CurseForge(curseforge::CurseForgeSource),
+    Wago(wago::WagoSource),
+}
+
+impl fmt::Debug for AnySource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AnySource::CurseForge(_) => f.debug_tuple("CurseForge").field(&"<source>").finish(),
+            AnySource::Wago(_) => f.debug_tuple("Wago").field(&"<source>").finish(),
+        }
+    }
+}
+
+impl AnySource {
+    pub fn kind(&self) -> SourceKind {
+        match self {
+            AnySource::CurseForge(_) => SourceKind::CurseForge,
+            AnySource::Wago(_) => SourceKind::Wago,
+        }
+    }
+}
+
+impl AddonSource for AnySource {
+    async fn search(&self, query: &str, page: Option<u32>) -> Result<SearchResult> {
+        match self {
+            AnySource::CurseForge(s) => s.search(query, page).await,
+            AnySource::Wago(s) => s.search(query, page).await,
+        }
+    }
+
+    async fn get_latest_version(
+        &self,
+        addon_id: &str,
+        channel: ReleaseChannel,
+    ) -> Result<VersionInfo> {
+        match self {
+            AnySource::CurseForge(s) => s.get_latest_version(addon_id, channel).await,
+            AnySource::Wago(s) => s.get_latest_version(addon_id, channel).await,
+        }
+    }
+
+    async fn download(&self, download_url: &str, destination: &Path) -> Result<PathBuf> {
+        match self {
+            AnySource::CurseForge(s) => s.download(download_url, destination).await,
+            AnySource::Wago(s) => s.download(download_url, destination).await,
+        }
+    }
+
+    async fn resolve_dependencies(
+        &self,
+        addon_id: &str,
+        channel: ReleaseChannel,
+    ) -> Result<Vec<String>> {
+        match self {
+            AnySource::CurseForge(s) => s.resolve_dependencies(addon_id, channel).await,
+            AnySource::Wago(s) => s.resolve_dependencies(addon_id, channel).await,
+        }
+    }
+
+    async fn get_addon_by_slug(&self, slug: &str) -> Result<AddonInfo> {
+        match self {
+            AnySource::CurseForge(s) => s.get_addon_by_slug(slug).await,
+            AnySource::Wago(s) => s.get_addon_by_slug(slug).await,
+        }
+    }
+
+    async fn get_addon_info_by_id(&self, addon_id: &str) -> Result<AddonInfo> {
+        match self {
+            AnySource::CurseForge(s) => s.get_addon_info_by_id(addon_id).await,
+            AnySource::Wago(s) => s.get_addon_info_by_id(addon_id).await,
+        }
+    }
+
+    // Explicit forwarding (not the trait default) so CurseForge's batch
+    // endpoints keep being used.
+    async fn get_latest_versions_batch(
+        &self,
+        addon_ids: &[&str],
+        channel: ReleaseChannel,
+    ) -> Result<HashMap<String, BatchVersionCheck>> {
+        match self {
+            AnySource::CurseForge(s) => s.get_latest_versions_batch(addon_ids, channel).await,
+            AnySource::Wago(s) => s.get_latest_versions_batch(addon_ids, channel).await,
+        }
+    }
+
+    async fn get_addon_infos_batch(&self, addon_ids: &[String]) -> Result<Vec<AddonInfo>> {
+        match self {
+            AnySource::CurseForge(s) => s.get_addon_infos_batch(addon_ids).await,
+            AnySource::Wago(s) => s.get_addon_infos_batch(addon_ids).await,
+        }
+    }
+}
+
+/// Constructs the client for a Source, resolving its credentials from config.
+/// A missing Wago key is a MissingApiKey error — callers that want to treat
+/// Wago as "unconfigured" (merged search, update) check
+/// `config.get_wago_access_key().is_some()` before calling this.
+pub fn build_source(kind: SourceKind, config: &Config) -> Result<AnySource> {
+    match kind {
+        SourceKind::CurseForge => {
+            let api_key = config.get_api_key()?;
+            Ok(AnySource::CurseForge(curseforge::CurseForgeSource::new(
+                api_key,
+            )?))
+        }
+        SourceKind::Wago => {
+            let access_key = config.get_wago_access_key().ok_or_else(|| {
+                WowctlError::MissingApiKey(
+                    "Wago access key not found. Set WOWCTL_WAGO_ACCESS_KEY or run \
+                     'wowctl config set wago_access_key <key>'. Personal access keys \
+                     come from https://addons.wago.io/patreon and require the \
+                     'Wago Addons Supporter' Patreon tier."
+                        .to_string(),
+                )
+            })?;
+            Ok(AnySource::Wago(wago::WagoSource::new(access_key)?))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,5 +542,31 @@ mod tests {
         for kind in [SourceKind::CurseForge, SourceKind::Wago] {
             assert_eq!(kind.to_possible_value().unwrap().get_name(), kind.as_str());
         }
+    }
+
+    #[test]
+    fn build_source_wago_without_key_errors_with_guidance() {
+        // Force key absence regardless of the developer machine's env.
+        // SAFETY: test-only env mutation; no other test reads this variable
+        // concurrently via std::env in this crate's lib tests.
+        unsafe { std::env::remove_var("WOWCTL_WAGO_ACCESS_KEY") };
+        let config = crate::config::Config {
+            wago_access_key: None,
+            ..Default::default()
+        };
+        let err = build_source(SourceKind::Wago, &config).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("addons.wago.io/patreon"), "got: {msg}");
+        assert!(msg.contains("WOWCTL_WAGO_ACCESS_KEY"), "got: {msg}");
+    }
+
+    #[test]
+    fn build_source_wago_with_key_succeeds() {
+        let config = crate::config::Config {
+            wago_access_key: Some("some-key".to_string()),
+            ..Default::default()
+        };
+        let source = build_source(SourceKind::Wago, &config).unwrap();
+        assert_eq!(source.kind(), SourceKind::Wago);
     }
 }
