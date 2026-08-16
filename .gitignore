@@ -3,3 +3,11 @@
 .DS_Store
 *.rs.bk
 .superpowers/
+.claude/
+
+# Local config holds real API keys — only the example belongs in git
+/config.toml
+
+# Launch notes — local only (contains pre-launch strategy, not for the public repo)
+/ANNOUNCEMENT.md
+/OVERWOLF-OUTREACH.md

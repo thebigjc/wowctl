@@ -115,9 +115,14 @@ fn addon_page_url(source: &str, slug: &str) -> Option<String> {
 
 /// Formats an ISO 8601 date string (e.g., "2025-02-15T10:30:00Z") into a
 /// friendlier "YYYY-MM-DD" display. Returns the raw string if parsing fails.
+///
+/// Works on `chars()` rather than byte offsets: `raw` comes from an external
+/// API and byte-slicing (`&raw[..10]`) panics if a multi-byte UTF-8
+/// character straddles the offset.
 fn format_release_date(raw: &str) -> String {
-    if raw.len() >= 10 && raw.as_bytes()[4] == b'-' && raw.as_bytes()[7] == b'-' {
-        raw[..10].to_string()
+    let chars: Vec<char> = raw.chars().take(10).collect();
+    if chars.len() == 10 && chars[4] == '-' && chars[7] == '-' {
+        chars.into_iter().collect()
     } else {
         raw.to_string()
     }
@@ -145,6 +150,19 @@ mod tests {
     #[test]
     fn format_release_date_empty() {
         assert_eq!(format_release_date(""), "");
+    }
+
+    #[test]
+    fn format_release_date_short_non_ascii() {
+        assert_eq!(format_release_date("12€"), "12€");
+    }
+
+    #[test]
+    fn format_release_date_non_ascii_does_not_panic() {
+        // The 10th character is a multi-byte '€'; byte-slicing at offset 10
+        // would panic here.
+        let raw = "1234-06-1€T00:00:00Z";
+        assert_eq!(format_release_date(raw), "1234-06-1€");
     }
 
     #[test]

@@ -2,8 +2,10 @@ use crate::colors::ColorExt;
 use crate::config::Config;
 use crate::error::{Result, WowctlError};
 use crate::registry::Registry;
+use crate::utils::is_safe_dir_name;
 use dialoguer::Confirm;
 use std::path::Path;
+use tracing::warn;
 
 /// Removes an addon's directories from disk and from the registry.
 /// Updates dependency references and returns a list of newly orphaned dependency slugs.
@@ -18,6 +20,13 @@ pub fn remove_addon_from_registry(
         .clone();
 
     for dir_name in &installed_addon.directories {
+        if !is_safe_dir_name(dir_name) {
+            warn!(
+                "Skipping unsafe directory name '{:?}' for addon '{}' — refusing to delete",
+                dir_name, slug
+            );
+            continue;
+        }
         let dir_path = addon_dir.join(dir_name);
         if dir_path.exists() {
             std::fs::remove_dir_all(&dir_path)?;
@@ -62,6 +71,13 @@ pub fn prompt_remove_orphans(
             if let Some(orphan) = registry.get(orphan_slug).cloned() {
                 println!("  Removing {}...", orphan.name.color_dimmed());
                 for dir_name in &orphan.directories {
+                    if !is_safe_dir_name(dir_name) {
+                        warn!(
+                            "Skipping unsafe directory name '{:?}' for orphan '{}' — refusing to delete",
+                            dir_name, orphan_slug
+                        );
+                        continue;
+                    }
                     let dir_path = addon_dir.join(dir_name);
                     if dir_path.exists() {
                         std::fs::remove_dir_all(&dir_path)?;
@@ -184,6 +200,49 @@ mod tests {
         let result = remove_addon_from_registry(&mut registry, "ghost-addon", tmp.path());
         assert!(result.is_ok());
         assert!(registry.get("ghost-addon").is_none());
+    }
+
+    #[test]
+    fn remove_addon_skips_traversal_dir_name_without_escaping() {
+        let tmp = tempdir().unwrap();
+        let addon_dir = tmp.path().join("AddOns");
+        std::fs::create_dir_all(&addon_dir).unwrap();
+        // A file that lives alongside (not inside) the addon dir — a ".."
+        // entry must never be able to reach it.
+        let sibling_marker = tmp.path().join("sibling_marker.txt");
+        std::fs::write(&sibling_marker, "still here").unwrap();
+
+        let mut registry = Registry::default();
+        registry.add(make_addon("evil-addon", vec![".."]));
+
+        let result = remove_addon_from_registry(&mut registry, "evil-addon", &addon_dir);
+
+        assert!(result.is_ok());
+        assert!(
+            sibling_marker.exists(),
+            "traversal directory name must not delete outside the addon dir"
+        );
+        assert!(addon_dir.exists(), "addon dir itself must remain");
+    }
+
+    #[test]
+    fn remove_addon_skips_empty_dir_name_does_not_delete_addon_dir() {
+        let tmp = tempdir().unwrap();
+        let addon_dir = tmp.path().join("AddOns");
+        std::fs::create_dir_all(&addon_dir).unwrap();
+        std::fs::write(addon_dir.join("keepme.txt"), "keep").unwrap();
+
+        let mut registry = Registry::default();
+        registry.add(make_addon("evil-addon", vec![""]));
+
+        let result = remove_addon_from_registry(&mut registry, "evil-addon", &addon_dir);
+
+        assert!(result.is_ok());
+        assert!(
+            addon_dir.exists(),
+            "empty directory name must not resolve to (and delete) the addon dir itself"
+        );
+        assert!(addon_dir.join("keepme.txt").exists());
     }
 
     #[test]

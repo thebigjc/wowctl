@@ -90,6 +90,16 @@ impl Config {
 
         let temp_path = config_path.with_extension("toml.tmp");
         std::fs::write(&temp_path, contents)?;
+
+        // The config file holds plaintext API keys. Harden permissions to
+        // owner-only before the rename so there's no window where the file
+        // is readable at the default (typically 0644) umask.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600))?;
+        }
+
         std::fs::rename(temp_path, config_path)?;
 
         Ok(())
@@ -247,5 +257,41 @@ mod tests {
     fn config_with_wago_key_parses() {
         let config: Config = toml::from_str(r#"wago_access_key = "abc123""#).unwrap();
         assert_eq!(config.wago_access_key, Some("abc123".to_string()));
+    }
+
+    /// The config file holds plaintext API keys, so `save()` must write it
+    /// with owner-only (0600) permissions on Unix. No other test in this
+    /// crate calls `Config::save`/`Config::load`/`Config::config_path`, so
+    /// overriding `XDG_CONFIG_HOME` here does not race with other tests.
+    #[cfg(unix)]
+    #[test]
+    fn save_sets_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        // SAFETY: test-only env mutation; no other test in this crate reads
+        // XDG_CONFIG_HOME or calls Config::save/load/config_path concurrently.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", tmp.path());
+        }
+
+        let config = Config {
+            curseforge_api_key: Some("super-secret-key".to_string()),
+            ..Config::default()
+        };
+        config.save().unwrap();
+
+        let config_path = Config::config_path().unwrap();
+        let perms = std::fs::metadata(&config_path).unwrap().permissions();
+
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        assert_eq!(
+            perms.mode() & 0o777,
+            0o600,
+            "config file must be owner-read/write only"
+        );
     }
 }

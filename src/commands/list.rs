@@ -10,6 +10,17 @@ pub enum ListFilter {
     Unmanaged,
 }
 
+/// Formats the release-date marker shown next to a managed addon (e.g.
+/// "  2025-02-15"), or an empty string if no release date is recorded.
+/// Truncates on a char boundary — release dates come from an external API
+/// and are not guaranteed to be pure ASCII.
+fn format_date_marker(released_at: Option<&str>) -> String {
+    released_at
+        .map(|d| crate::utils::char_safe_prefix(d, 10))
+        .map(|d| format!("  {d}"))
+        .unwrap_or_default()
+}
+
 pub async fn list(filter: ListFilter) -> Result<()> {
     let config = Config::load()?;
     let addon_dir = config.get_addon_dir()?;
@@ -41,12 +52,7 @@ pub async fn list(filter: ListFilter) -> Result<()> {
                     if addon.is_auto_update() {
                         markers.push_str(" (auto-update)");
                     }
-                    let date_str = addon
-                        .released_at
-                        .as_deref()
-                        .map(|d| if d.len() >= 10 { &d[..10] } else { d })
-                        .map(|d| format!("  {d}"))
-                        .unwrap_or_default();
+                    let date_str = format_date_marker(addon.released_at.as_deref());
                     println!(
                         "  {}  {}  {}{}{}",
                         addon.slug.color_cyan(),
@@ -88,4 +94,35 @@ pub async fn list(filter: ListFilter) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_date_marker_none_is_empty() {
+        assert_eq!(format_date_marker(None), "");
+    }
+
+    #[test]
+    fn format_date_marker_full_iso_date() {
+        assert_eq!(
+            format_date_marker(Some("2025-02-15T10:30:00Z")),
+            "  2025-02-15"
+        );
+    }
+
+    #[test]
+    fn format_date_marker_short_input() {
+        assert_eq!(format_date_marker(Some("2025")), "  2025");
+    }
+
+    #[test]
+    fn format_date_marker_non_ascii_does_not_panic() {
+        // The 10th character is a multi-byte '€'; byte-slicing at offset 10
+        // would panic here.
+        let raw = "1234-06-1€T00:00:00Z";
+        assert_eq!(format_date_marker(Some(raw)), "  1234-06-1€");
+    }
 }

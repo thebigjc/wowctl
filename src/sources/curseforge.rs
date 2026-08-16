@@ -833,7 +833,24 @@ impl AddonSource for CurseForgeSource {
             })
             .collect();
 
-        let modules: Vec<String> = latest_file.modules.iter().map(|m| m.name.clone()).collect();
+        // The API's module names become on-disk directory names
+        // (`addon_dir.join(name)`); reject anything that isn't a safe,
+        // ordinary path component before it ever reaches the registry.
+        let modules: Vec<String> = latest_file
+            .modules
+            .iter()
+            .filter_map(|m| {
+                if crate::utils::is_safe_dir_name(&m.name) {
+                    Some(m.name.clone())
+                } else {
+                    warn!(
+                        "Ignoring unsafe module directory name from CurseForge API: {:?}",
+                        m.name
+                    );
+                    None
+                }
+            })
+            .collect();
         if !modules.is_empty() {
             debug!("File modules (canonical directories): {:?}", modules);
         }
@@ -1449,6 +1466,43 @@ mod tests {
             build_cdn_url(1234, "SmallAddon.zip"),
             "https://edge.forgecdn.net/files/1/234/SmallAddon.zip"
         );
+    }
+
+    #[tokio::test]
+    async fn get_latest_version_drops_unsafe_module_names() {
+        let server = wiremock::MockServer::start().await;
+        let files_body = serde_json::json!({
+            "data": [{
+                "id": 5877543,
+                "displayName": "WeakAuras 5.12.8",
+                "fileName": "WeakAuras-5.12.8.zip",
+                "downloadUrl": "https://example.com/wa.zip",
+                "fileLength": 500000,
+                "gameVersions": ["11.1.0"],
+                "dependencies": [],
+                "fileDate": "2026-03-01T00:00:00Z",
+                "releaseType": 1,
+                "modules": [
+                    { "name": "WeakAuras", "fingerprint": 1 },
+                    { "name": "..", "fingerprint": 2 },
+                    { "name": "", "fingerprint": 3 },
+                    { "name": "a/b", "fingerprint": 4 }
+                ]
+            }]
+        });
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/mods/65387/files"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(files_body))
+            .mount(&server)
+            .await;
+
+        let source = CurseForgeSource::with_base_url("test-key".to_string(), server.uri()).unwrap();
+        let v = source
+            .get_latest_version("65387", ReleaseChannel::Stable)
+            .await
+            .unwrap();
+
+        assert_eq!(v.modules, vec!["WeakAuras".to_string()]);
     }
 
     #[test]

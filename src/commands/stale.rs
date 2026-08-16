@@ -8,17 +8,21 @@ use dialoguer::Confirm;
 
 /// Parses a `YYYY-MM-DD` date from the start of a string (ISO 8601 or date-only).
 /// Returns `(year, month, day)` or `None` if the format is invalid.
+///
+/// Works on `chars()` rather than byte offsets: `s` comes from an external
+/// API and byte-slicing (`&s[0..4]`, etc.) panics if a multi-byte UTF-8
+/// character straddles one of the slice boundaries.
 fn parse_date_prefix(s: &str) -> Option<(i32, u32, u32)> {
-    if s.len() < 10 {
+    let chars: Vec<char> = s.chars().take(10).collect();
+    if chars.len() != 10 || chars[4] != '-' || chars[7] != '-' {
         return None;
     }
-    let bytes = s.as_bytes();
-    if bytes[4] != b'-' || bytes[7] != b'-' {
-        return None;
-    }
-    let year: i32 = s[0..4].parse().ok()?;
-    let month: u32 = s[5..7].parse().ok()?;
-    let day: u32 = s[8..10].parse().ok()?;
+    let year_str: String = chars[0..4].iter().collect();
+    let month_str: String = chars[5..7].iter().collect();
+    let day_str: String = chars[8..10].iter().collect();
+    let year: i32 = year_str.parse().ok()?;
+    let month: u32 = month_str.parse().ok()?;
+    let day: u32 = day_str.parse().ok()?;
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
@@ -57,6 +61,16 @@ fn months_between(earlier: (i32, u32, u32), later: (i32, u32, u32)) -> u32 {
     let month_diff = later.1 as i32 - earlier.1 as i32;
     let day_adjust = if later.2 < earlier.2 { -1 } else { 0 };
     (year_diff * 12 + month_diff + day_adjust).max(0) as u32
+}
+
+/// Formats the short release date shown in the stale listing, or "unknown"
+/// if the date is absent or too short to contain a date prefix. Char-safe:
+/// `released_at` comes from an external API and is not guaranteed ASCII.
+fn short_release_date(released_at: Option<&str>) -> &str {
+    released_at
+        .filter(|d| d.chars().count() >= 10)
+        .map(|d| crate::utils::char_safe_prefix(d, 10))
+        .unwrap_or("unknown")
 }
 
 /// Human-readable age string from a month count.
@@ -169,11 +183,7 @@ pub async fn stale(threshold_months: u32) -> Result<()> {
             .unwrap_or(0);
 
         for (addon, age) in &stale {
-            let date = addon
-                .released_at
-                .as_deref()
-                .and_then(|d| if d.len() >= 10 { Some(&d[..10]) } else { None })
-                .unwrap_or("unknown");
+            let date = short_release_date(addon.released_at.as_deref());
             println!(
                 "  {:<slug_w$}  {:<ver_w$}  {}  ({})",
                 addon.slug.color_cyan(),
@@ -281,6 +291,44 @@ mod tests {
     #[test]
     fn parse_released_date_empty_returns_none() {
         assert_eq!(parse_date_prefix(""), None);
+    }
+
+    #[test]
+    fn parse_date_prefix_short_input_returns_none() {
+        assert_eq!(parse_date_prefix("2025-01"), None);
+    }
+
+    #[test]
+    fn parse_date_prefix_non_ascii_does_not_panic() {
+        // The 10th character is a multi-byte '€'; byte-slicing at offset 10
+        // would panic here. It's not a valid day, so this should return None.
+        assert_eq!(parse_date_prefix("1234-06-1€"), None);
+    }
+
+    // --- short_release_date tests ---
+
+    #[test]
+    fn short_release_date_full_iso() {
+        assert_eq!(
+            short_release_date(Some("2025-02-15T10:30:00Z")),
+            "2025-02-15"
+        );
+    }
+
+    #[test]
+    fn short_release_date_none_is_unknown() {
+        assert_eq!(short_release_date(None), "unknown");
+    }
+
+    #[test]
+    fn short_release_date_too_short_is_unknown() {
+        assert_eq!(short_release_date(Some("2025")), "unknown");
+    }
+
+    #[test]
+    fn short_release_date_non_ascii_does_not_panic() {
+        let raw = "1234-06-1€T00:00:00Z";
+        assert_eq!(short_release_date(Some(raw)), "1234-06-1€");
     }
 
     // --- Age calculation tests ---
