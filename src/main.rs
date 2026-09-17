@@ -61,6 +61,12 @@ enum Commands {
 
         #[arg(long, value_enum, help = "Release channel: stable, beta, or alpha")]
         channel: Option<ReleaseChannel>,
+
+        #[arg(
+            long,
+            help = "Reinstall even if the installed version is already current"
+        )]
+        force: bool,
     },
 
     #[command(about = "Remove an addon")]
@@ -86,7 +92,11 @@ enum Commands {
         #[arg(long, help = "Page number (default: 1)")]
         page: Option<u32>,
 
-        #[arg(long, value_enum, help = "Limit search to one source: curseforge or wago")]
+        #[arg(
+            long,
+            value_enum,
+            help = "Limit search to one source: curseforge or wago"
+        )]
         source: Option<wowctl::sources::SourceKind>,
     },
 
@@ -134,7 +144,11 @@ enum Commands {
 
     #[command(about = "Find addons with no updates in a long time")]
     Stale {
-        #[arg(long, default_value = "3", help = "Number of months without an update to consider stale")]
+        #[arg(
+            long,
+            default_value = "3",
+            help = "Number of months without an update to consider stale"
+        )]
         months: u32,
     },
 }
@@ -225,12 +239,14 @@ async fn run() -> Result<()> {
             auto,
             auto_only,
             channel,
+            force,
         } => {
             wowctl::commands::update::update(
                 addon.as_deref(),
                 auto || auto_only,
                 auto_only,
                 channel,
+                force,
             )
             .await
         }
@@ -245,9 +261,11 @@ async fn run() -> Result<()> {
             };
             wowctl::commands::list::list(filter).await
         }
-        Commands::Search { query, page, source } => {
-            wowctl::commands::search::search(&query, page, source).await
-        }
+        Commands::Search {
+            query,
+            page,
+            source,
+        } => wowctl::commands::search::search(&query, page, source).await,
         Commands::Info { addon } => wowctl::commands::info::info(&addon).await,
         Commands::Adopt {
             addon_folder,

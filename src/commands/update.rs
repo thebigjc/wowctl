@@ -3,8 +3,8 @@ use crate::colors::ColorExt;
 use crate::config::Config;
 use crate::error::{Result, WowctlError};
 use crate::registry::Registry;
-use crate::sources::{AddonSource, AnySource, BatchVersionCheck, SourceKind, build_source};
 use crate::sources::curseforge::CurseForgeSource;
+use crate::sources::{AddonSource, AnySource, BatchVersionCheck, SourceKind, build_source};
 use crate::utils::{
     backup_addon_dirs, check_disk_space, cleanup_backup_dirs, cleanup_temp_dir,
     extract_zip_to_temp, move_addon_dirs, restore_addon_dirs,
@@ -43,6 +43,7 @@ pub async fn update(
     auto: bool,
     auto_only: bool,
     channel_override: Option<ReleaseChannel>,
+    force: bool,
 ) -> Result<()> {
     let config = Config::load()?;
     let addon_dir = config.get_addon_dir()?;
@@ -63,10 +64,7 @@ pub async fn update(
                 }
                 vec![addon]
             } else {
-                println!(
-                    "{}",
-                    format!("Addon '{slug}' is not installed").color_red()
-                );
+                println!("{}", format!("Addon '{slug}' is not installed").color_red());
                 return Ok(());
             }
         }
@@ -148,7 +146,7 @@ pub async fn update(
                     let addon_channel =
                         resolve_addon_channel(installed, channel_override, default_channel);
                     if let Some(check) = batch_map.get(&installed.addon_id) {
-                        if is_update_available(installed, check) {
+                        if should_update(installed, check, force) {
                             updates.push(UpdateInfo {
                                 slug: installed.slug.clone(),
                                 name: installed.name.clone(),
@@ -175,6 +173,7 @@ pub async fn update(
                         channel_override,
                         default_channel,
                         &mut updates,
+                        force,
                     )
                     .await;
                 }
@@ -191,6 +190,7 @@ pub async fn update(
                     channel_override,
                     default_channel,
                     &mut updates,
+                    force,
                 )
                 .await;
             }
@@ -428,6 +428,7 @@ async fn check_updates_sequential(
     channel_override: Option<ReleaseChannel>,
     default_channel: ReleaseChannel,
     updates: &mut Vec<UpdateInfo>,
+    force: bool,
 ) {
     for installed in addons {
         let addon_channel = resolve_addon_channel(installed, channel_override, default_channel);
@@ -443,7 +444,7 @@ async fn check_updates_sequential(
             Ok(version_info) => {
                 let check =
                     BatchVersionCheck::from_version_info(&installed.addon_id, &version_info);
-                if is_update_available(installed, &check) {
+                if should_update(installed, &check, force) {
                     updates.push(UpdateInfo {
                         slug: installed.slug.clone(),
                         name: installed.name.clone(),
@@ -470,10 +471,7 @@ async fn check_updates_sequential(
 /// Determines whether a newer release is available by comparing the strongest
 /// release identity both sides share: external release ID (Wago), then numeric
 /// file ID (CurseForge), then the version string.
-fn is_update_available(
-    installed: &InstalledAddon,
-    latest: &BatchVersionCheck,
-) -> bool {
+fn is_update_available(installed: &InstalledAddon, latest: &BatchVersionCheck) -> bool {
     match (
         installed.external_release_id.as_deref(),
         latest.external_release_id.as_deref(),
@@ -484,6 +482,14 @@ fn is_update_available(
             _ => installed.version != latest.version,
         },
     }
+}
+
+/// Whether an addon should be (re)downloaded. `force` bypasses release-identity
+/// comparison entirely, which is how a registry that claims addons are installed
+/// gets reconciled with an addon directory where the files are absent — update
+/// detection is metadata-only and never inspects the filesystem.
+fn should_update(installed: &InstalledAddon, latest: &BatchVersionCheck, force: bool) -> bool {
+    force || is_update_available(installed, latest)
 }
 
 /// A registry entry is stale when it lacks the release identity its Source
@@ -600,9 +606,7 @@ async fn refresh_stale_metadata(
     }
 
     if refreshed > 0 {
-        println!(
-            "Refreshed metadata for {refreshed} addon(s) with outdated registry entries."
-        );
+        println!("Refreshed metadata for {refreshed} addon(s) with outdated registry entries.");
     }
 
     refreshed
@@ -692,6 +696,22 @@ mod tests {
             &installed,
             &make_check(None, None, "1.0")
         ));
+    }
+
+    #[test]
+    fn force_updates_even_when_identity_matches() {
+        let installed = make_installed(Some(10), None, "1.0");
+        let latest = make_check(Some(10), None, "1.0");
+        assert!(!should_update(&installed, &latest, false));
+        assert!(should_update(&installed, &latest, true));
+    }
+
+    #[test]
+    fn force_does_not_suppress_a_real_update() {
+        let installed = make_installed(Some(10), None, "1.0");
+        let latest = make_check(Some(11), None, "1.1");
+        assert!(should_update(&installed, &latest, true));
+        assert!(should_update(&installed, &latest, false));
     }
 
     #[test]
