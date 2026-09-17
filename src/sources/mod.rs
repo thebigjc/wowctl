@@ -173,17 +173,14 @@ pub trait AddonSource: Send + Sync {
         &self,
         addon_ids: &[&str],
         channel: ReleaseChannel,
-    ) -> impl std::future::Future<Output = Result<HashMap<String, BatchVersionCheck>>> + Send
-    {
+    ) -> impl std::future::Future<Output = Result<HashMap<String, BatchVersionCheck>>> + Send {
         async move {
             let mut results = HashMap::new();
             for id in addon_ids {
                 match self.get_latest_version(id, channel).await {
                     Ok(v) => {
-                        results.insert(
-                            id.to_string(),
-                            BatchVersionCheck::from_version_info(id, &v),
-                        );
+                        results
+                            .insert(id.to_string(), BatchVersionCheck::from_version_info(id, &v));
                     }
                     Err(e) => {
                         tracing::debug!("Batch version check failed for {}: {}", id, e);
@@ -464,10 +461,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let url = format!(
-            "{}/files/broken.zip?link=super-secret-token",
-            server.uri()
-        );
+        let url = format!("{}/files/broken.zip?link=super-secret-token", server.uri());
         let client = reqwest::Client::new();
         let tmp = tempfile::tempdir().unwrap();
         let dest = tmp.path().join("broken.zip");

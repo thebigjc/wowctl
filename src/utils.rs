@@ -173,16 +173,27 @@ pub fn move_addon_dirs(temp_dir: &Path, addon_dir: &Path, directories: &[String]
         }
         let src = temp_dir.join(dir_name);
         let dest = addon_dir.join(dir_name);
-        debug!("move_addon_dirs: processing '{}': src={}, dest={}", dir_name, src.display(), dest.display());
-        debug!("move_addon_dirs: src.exists()={}, dest.exists()={}", src.exists(), dest.exists());
+        debug!(
+            "move_addon_dirs: processing '{}': src={}, dest={}",
+            dir_name,
+            src.display(),
+            dest.display()
+        );
+        debug!(
+            "move_addon_dirs: src.exists()={}, dest.exists()={}",
+            src.exists(),
+            dest.exists()
+        );
 
         if dest.exists() {
-            debug!("move_addon_dirs: dest metadata: is_dir={}, is_file={}, is_symlink={}", dest.is_dir(), dest.is_file(), dest.is_symlink());
+            debug!(
+                "move_addon_dirs: dest metadata: is_dir={}, is_file={}, is_symlink={}",
+                dest.is_dir(),
+                dest.is_file(),
+                dest.is_symlink()
+            );
             if dest.is_file() || dest.is_symlink() {
-                warn!(
-                    "Expected directory but found file at: {}",
-                    dest.display()
-                );
+                warn!("Expected directory but found file at: {}", dest.display());
                 let prompt = format!(
                     "'{}' exists as a file where a directory is expected. Remove it?",
                     dest.display()
@@ -203,15 +214,27 @@ pub fn move_addon_dirs(temp_dir: &Path, addon_dir: &Path, directories: &[String]
                 }
                 fs::remove_file(&dest)?;
             } else {
-                debug!("move_addon_dirs: removing existing directory: {}", dest.display());
+                debug!(
+                    "move_addon_dirs: removing existing directory: {}",
+                    dest.display()
+                );
                 fs::remove_dir_all(&dest).map_err(|e| {
-                    warn!("move_addon_dirs: remove_dir_all({}) failed: errno {:?}: {}", dest.display(), e.raw_os_error(), e);
+                    warn!(
+                        "move_addon_dirs: remove_dir_all({}) failed: errno {:?}: {}",
+                        dest.display(),
+                        e.raw_os_error(),
+                        e
+                    );
                     e
                 })?;
             }
         }
 
-        debug!("move_addon_dirs: rename {} -> {}", src.display(), dest.display());
+        debug!(
+            "move_addon_dirs: rename {} -> {}",
+            src.display(),
+            dest.display()
+        );
         match fs::rename(&src, &dest) {
             Ok(()) => {
                 debug!("move_addon_dirs: rename succeeded for {}", dir_name);
@@ -226,7 +249,10 @@ pub fn move_addon_dirs(temp_dir: &Path, addon_dir: &Path, directories: &[String]
                 // for cross-filesystem renames. Fall back to copy for any error.
                 warn!(
                     "move_addon_dirs: rename({} -> {}) failed: errno {:?}: {}, falling back to copy",
-                    src.display(), dest.display(), e.raw_os_error(), e
+                    src.display(),
+                    dest.display(),
+                    e.raw_os_error(),
+                    e
                 );
                 copy_dir_recursive(&src, &dest)?;
                 fs::remove_dir_all(&src)?;
@@ -242,7 +268,12 @@ pub fn move_addon_dirs(temp_dir: &Path, addon_dir: &Path, directories: &[String]
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     debug!("copy_dir_recursive: create_dir_all({})", dst.display());
     fs::create_dir_all(dst).map_err(|e| {
-        warn!("copy_dir_recursive: create_dir_all({}) failed: errno {:?}: {}", dst.display(), e.raw_os_error(), e);
+        warn!(
+            "copy_dir_recursive: create_dir_all({}) failed: errno {:?}: {}",
+            dst.display(),
+            e.raw_os_error(),
+            e
+        );
         e
     })?;
     for entry in fs::read_dir(src)? {
@@ -252,9 +283,19 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         if src_path.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
-            debug!("copy_dir_recursive: copy {} -> {}", src_path.display(), dst_path.display());
+            debug!(
+                "copy_dir_recursive: copy {} -> {}",
+                src_path.display(),
+                dst_path.display()
+            );
             fs::copy(&src_path, &dst_path).map_err(|e| {
-                warn!("copy_dir_recursive: copy({} -> {}) failed: errno {:?}: {}", src_path.display(), dst_path.display(), e.raw_os_error(), e);
+                warn!(
+                    "copy_dir_recursive: copy({} -> {}) failed: errno {:?}: {}",
+                    src_path.display(),
+                    dst_path.display(),
+                    e.raw_os_error(),
+                    e
+                );
                 e
             })?;
         }
@@ -471,18 +512,15 @@ fn parse_toc_contents(contents: &str) -> TocMetadata {
                             }
                         }
                     }
-                    "X-WoWI-ID"
-                        if !value.is_empty() => {
-                            meta.wowi_id = Some(value.to_string());
-                        }
-                    "X-Wago-ID"
-                        if !value.is_empty() => {
-                            meta.wago_id = Some(value.to_string());
-                        }
-                    "X-Tukui-ProjectID"
-                        if !value.is_empty() => {
-                            meta.tukui_id = Some(value.to_string());
-                        }
+                    "X-WoWI-ID" if !value.is_empty() => {
+                        meta.wowi_id = Some(value.to_string());
+                    }
+                    "X-Wago-ID" if !value.is_empty() => {
+                        meta.wago_id = Some(value.to_string());
+                    }
+                    "X-Tukui-ProjectID" if !value.is_empty() => {
+                        meta.tukui_id = Some(value.to_string());
+                    }
                     _ => {}
                 }
             }
@@ -640,20 +678,41 @@ pub fn backup_addon_dirs(addon_dir: &Path, directories: &[String]) -> Result<Vec
         }
         let original = addon_dir.join(dir_name);
         if !original.exists() {
-            debug!("backup_addon_dirs: {} does not exist, skipping", original.display());
+            debug!(
+                "backup_addon_dirs: {} does not exist, skipping",
+                original.display()
+            );
             continue;
         }
         let backup = addon_dir.join(format!("{dir_name}{BACKUP_SUFFIX}"));
         if backup.exists() {
-            debug!("backup_addon_dirs: removing old backup {}", backup.display());
+            debug!(
+                "backup_addon_dirs: removing old backup {}",
+                backup.display()
+            );
             fs::remove_dir_all(&backup).map_err(|e| {
-                warn!("backup_addon_dirs: remove_dir_all({}) failed: errno {:?}: {}", backup.display(), e.raw_os_error(), e);
+                warn!(
+                    "backup_addon_dirs: remove_dir_all({}) failed: errno {:?}: {}",
+                    backup.display(),
+                    e.raw_os_error(),
+                    e
+                );
                 e
             })?;
         }
-        debug!("backup_addon_dirs: rename {} -> {}", original.display(), backup.display());
+        debug!(
+            "backup_addon_dirs: rename {} -> {}",
+            original.display(),
+            backup.display()
+        );
         fs::rename(&original, &backup).map_err(|e| {
-            warn!("backup_addon_dirs: rename({} -> {}) failed: errno {:?}: {}", original.display(), backup.display(), e.raw_os_error(), e);
+            warn!(
+                "backup_addon_dirs: rename({} -> {}) failed: errno {:?}: {}",
+                original.display(),
+                backup.display(),
+                e.raw_os_error(),
+                e
+            );
             e
         })?;
         backed_up.push(dir_name.clone());

@@ -224,7 +224,10 @@ async fn get_addon_by_slug_matches_exact_slug() {
         .mount(&server)
         .await;
 
-    let info = source(&server).get_addon_by_slug("classcodex").await.unwrap();
+    let info = source(&server)
+        .get_addon_by_slug("classcodex")
+        .await
+        .unwrap();
     assert_eq!(info.id, "rNkynwKa");
     assert_eq!(info.slug, "classcodex");
 }
@@ -245,7 +248,10 @@ async fn get_addon_by_slug_falls_back_to_detail_lookup() {
         .mount(&server)
         .await;
 
-    let info = source(&server).get_addon_by_slug("classcodex").await.unwrap();
+    let info = source(&server)
+        .get_addon_by_slug("classcodex")
+        .await
+        .unwrap();
     assert_eq!(info.id, "rNkynwKa");
 }
 
