@@ -293,11 +293,7 @@ impl WagoSource {
 
         loop {
             attempts += 1;
-            match build()
-                .bearer_auth(&self.access_key)
-                .send()
-                .await
-            {
+            match build().bearer_auth(&self.access_key).send().await {
                 Ok(response) => {
                     let status = response.status();
                     debug!("Wago response status: {}", status);
@@ -457,9 +453,9 @@ impl AddonSource for WagoSource {
         // Fallback: the detail endpoint also resolves slugs directly.
         match self.get_detail(slug).await {
             Ok(detail) if detail.slug == slug => Ok(detail_to_addon_info(&detail)),
-            Ok(_) | Err(WowctlError::AddonNotFound(_)) => Err(WowctlError::AddonNotFound(
-                format!("Addon '{slug}' not found on Wago"),
-            )),
+            Ok(_) | Err(WowctlError::AddonNotFound(_)) => Err(WowctlError::AddonNotFound(format!(
+                "Addon '{slug}' not found on Wago"
+            ))),
             Err(e) => Err(e),
         }
     }

@@ -156,10 +156,7 @@ pub async fn stale(threshold_months: u32) -> Result<()> {
     if stale.is_empty() && unknown.is_empty() {
         println!(
             "{}",
-            format!(
-                "No stale addons found (threshold: {threshold_months} months)."
-            )
-            .color_green()
+            format!("No stale addons found (threshold: {threshold_months} months).").color_green()
         );
         return Ok(());
     }
@@ -167,10 +164,7 @@ pub async fn stale(threshold_months: u32) -> Result<()> {
     if !stale.is_empty() {
         println!(
             "{}",
-            format!(
-                "Addons with no update in {threshold_months} months or more:"
-            )
-            .color_bold()
+            format!("Addons with no update in {threshold_months} months or more:").color_bold()
         );
         println!();
 
@@ -211,8 +205,7 @@ pub async fn stale(threshold_months: u32) -> Result<()> {
 
             if should_remove {
                 println!("  Removing {}...", addon.name.color_cyan());
-                let orphans =
-                    remove_addon_from_registry(&mut registry, &addon.slug, &addon_dir)?;
+                let orphans = remove_addon_from_registry(&mut registry, &addon.slug, &addon_dir)?;
                 prompt_remove_orphans(&mut registry, &orphans, &addon_dir)?;
             }
         }
@@ -227,7 +220,11 @@ pub async fn stale(threshold_months: u32) -> Result<()> {
             "Addons with unknown release date (run `wowctl update` to backfill):".color_yellow()
         );
         for addon in &unknown {
-            println!("  {}  {}", addon.slug.color_cyan(), addon.version.color_green());
+            println!(
+                "  {}  {}",
+                addon.slug.color_cyan(),
+                addon.version.color_green()
+            );
         }
     }
 

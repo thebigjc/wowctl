@@ -39,7 +39,10 @@ pub async fn init() -> Result<()> {
     config.curseforge_api_key = Some(api_key);
     println!();
 
-    println!("{}", "Step 2: Wago Addons access key (optional)".color_bold());
+    println!(
+        "{}",
+        "Step 2: Wago Addons access key (optional)".color_bold()
+    );
     println!("Needed only for Wago-exclusive addons (installed with 'wago:<slug>').");
     println!("Keys come from https://addons.wago.io/patreon and require the");
     println!("'Wago Addons Supporter' Patreon tier. Press Enter to skip.");

@@ -23,6 +23,82 @@ struct DownloadedAddon {
     temp_zip: PathBuf,
     temp_extract_dir: PathBuf,
     extracted_dirs: Vec<String>,
+    /// Folders this addon will own in the Registry (CurseForge modules when
+    /// present, otherwise the zip's top-level directories).
+    directories: Vec<String>,
+}
+
+/// The ownership-relevant view of one addon in an install plan.
+struct PlannedDirs<'a> {
+    name: &'a str,
+    is_dependency: bool,
+    directories: &'a [String],
+}
+
+/// Decides folder ownership for a whole install plan before any file moves.
+///
+/// Returns, per plan entry, `None` to install it or `Some(provider)` to skip a
+/// dependency whose folders are all shipped by another addon — either one
+/// already in the Registry or a strictly larger package in this same plan
+/// (e.g. Altoholic bundles DataStore). Any other overlap is an error, raised
+/// here so a failed install leaves nothing half-written on disk.
+fn plan_directory_ownership(
+    registry: &Registry,
+    plan: &[PlannedDirs],
+) -> Result<Vec<Option<String>>> {
+    let is_superset = |outer: &[String], inner: &[String]| {
+        !inner.is_empty() && inner.iter().all(|d| outer.contains(d))
+    };
+
+    let decisions: Vec<Option<String>> = plan
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            if !entry.is_dependency {
+                return None;
+            }
+            if let Some(owner) = registry
+                .addons
+                .values()
+                .find(|a| is_superset(&a.directories, entry.directories))
+            {
+                return Some(owner.name.clone());
+            }
+            plan.iter()
+                .enumerate()
+                .find(|(j, other)| {
+                    *j != i
+                        && other.directories.len() > entry.directories.len()
+                        && is_superset(other.directories, entry.directories)
+                })
+                .map(|(_, other)| other.name.to_string())
+        })
+        .collect();
+
+    let kept: Vec<&PlannedDirs> = plan
+        .iter()
+        .zip(&decisions)
+        .filter(|(_, d)| d.is_none())
+        .map(|(p, _)| p)
+        .collect();
+
+    for (i, entry) in kept.iter().enumerate() {
+        check_directory_conflicts(registry, entry.directories, None)?;
+        for other in &kept[i + 1..] {
+            if let Some(dir) = entry
+                .directories
+                .iter()
+                .find(|d| other.directories.contains(d))
+            {
+                return Err(WowctlError::Source(format!(
+                    "Directory '{dir}' is shipped by both '{}' and '{}'",
+                    entry.name, other.name
+                )));
+            }
+        }
+    }
+
+    Ok(decisions)
 }
 
 /// Guards the Registry's one-Slug-one-Source invariant on install.
@@ -165,6 +241,16 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
                 }
             };
 
+            let directories = if version_info.modules.is_empty() {
+                extracted_dirs.clone()
+            } else {
+                debug!(
+                    "Using CurseForge modules for directory list: {:?} (zip had: {:?})",
+                    version_info.modules, extracted_dirs
+                );
+                version_info.modules.clone()
+            };
+
             Ok::<_, WowctlError>(DownloadedAddon {
                 addon_info: addon_to_install,
                 is_dependency: is_dep,
@@ -172,6 +258,7 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
                 temp_zip,
                 temp_extract_dir,
                 extracted_dirs,
+                directories,
             })
         }));
     }
@@ -193,8 +280,34 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
         }
     }
 
+    let plan: Vec<PlannedDirs> = downloads
+        .iter()
+        .map(|d| PlannedDirs {
+            name: &d.addon_info.name,
+            is_dependency: d.is_dependency,
+            directories: &d.directories,
+        })
+        .collect();
+    let decisions = match plan_directory_ownership(&registry, &plan) {
+        Ok(decisions) => decisions,
+        Err(e) => {
+            cleanup_downloaded(&downloads);
+            return Err(e);
+        }
+    };
+
     // Sequential file move + registry update phase
-    for downloaded in downloads {
+    for (downloaded, provider) in downloads.into_iter().zip(decisions) {
+        if let Some(provider) = provider {
+            println!(
+                "  Skipping dependency: {} (bundled with {})",
+                downloaded.addon_info.name.color_cyan(),
+                provider.color_cyan()
+            );
+            cleanup_downloaded(std::slice::from_ref(&downloaded));
+            continue;
+        }
+
         let prefix = if downloaded.is_dependency {
             "  Installing dependency: "
         } else {
@@ -212,22 +325,6 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
             version_display.color_green()
         );
         let _ = std::io::Write::flush(&mut std::io::stdout());
-
-        let directories = if downloaded.version_info.modules.is_empty() {
-            downloaded.extracted_dirs.clone()
-        } else {
-            debug!(
-                "Using CurseForge modules for directory list: {:?} (zip had: {:?})",
-                downloaded.version_info.modules, downloaded.extracted_dirs
-            );
-            downloaded.version_info.modules.clone()
-        };
-
-        if let Err(e) = check_directory_conflicts(&registry, &directories, None) {
-            let _ = cleanup_temp_dir(&downloaded.temp_extract_dir);
-            let _ = std::fs::remove_file(&downloaded.temp_zip);
-            return Err(e);
-        }
 
         if let Err(e) = move_addon_dirs(
             &downloaded.temp_extract_dir,
@@ -253,7 +350,7 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
             version: downloaded.version_info.version,
             source: downloaded.addon_info.source.clone(),
             addon_id: downloaded.addon_info.id.clone(),
-            directories,
+            directories: downloaded.directories,
             is_dependency: downloaded.is_dependency,
             required_by: if downloaded.is_dependency {
                 vec![slug.clone()]
@@ -271,11 +368,12 @@ pub async fn install(addon: &str, channel_override: Option<ReleaseChannel>) -> R
         };
 
         registry.add(installed);
+        // Save per addon so a later failure never leaves untracked folders.
+        registry.save()?;
 
         println!("{}", "done.".color_green());
     }
 
-    registry.save()?;
     println!("{}", "Installation complete!".color_green().color_bold());
 
     Ok(())
@@ -339,5 +437,101 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("curseforge"), "got: {msg}");
         assert!(msg.contains("wowctl remove classcodex"), "got: {msg}");
+    }
+
+    fn dirs(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    #[test]
+    fn dependency_bundled_by_larger_plan_entry_is_skipped() {
+        let registry = Registry::default();
+        let target = dirs(&["WarboundGearRouter"]);
+        let datastore = dirs(&["DataStore"]);
+        let inventory = dirs(&["DataStore_Inventory"]);
+        let altoholic = dirs(&["Altoholic", "DataStore", "DataStore_Inventory"]);
+        let plan = [
+            PlannedDirs {
+                name: "Warbound",
+                is_dependency: false,
+                directories: &target,
+            },
+            PlannedDirs {
+                name: "DataStore",
+                is_dependency: true,
+                directories: &datastore,
+            },
+            PlannedDirs {
+                name: "DataStore_Inventory",
+                is_dependency: true,
+                directories: &inventory,
+            },
+            PlannedDirs {
+                name: "Altoholic",
+                is_dependency: true,
+                directories: &altoholic,
+            },
+        ];
+        let decisions = plan_directory_ownership(&registry, &plan).unwrap();
+        assert_eq!(
+            decisions,
+            vec![
+                None,
+                Some("Altoholic".into()),
+                Some("Altoholic".into()),
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn dependency_already_provided_by_installed_addon_is_skipped() {
+        let mut registry = registry_with("altoholic", "curseforge");
+        registry.addons.get_mut("altoholic").unwrap().directories =
+            dirs(&["Altoholic", "DataStore"]);
+        let datastore = dirs(&["DataStore"]);
+        let plan = [PlannedDirs {
+            name: "DataStore",
+            is_dependency: true,
+            directories: &datastore,
+        }];
+        let decisions = plan_directory_ownership(&registry, &plan).unwrap();
+        assert_eq!(decisions, vec![Some("altoholic".into())]);
+    }
+
+    #[test]
+    fn partial_overlap_in_plan_is_error() {
+        let registry = Registry::default();
+        let a = dirs(&["A", "Shared"]);
+        let b = dirs(&["B", "Shared"]);
+        let plan = [
+            PlannedDirs {
+                name: "A",
+                is_dependency: false,
+                directories: &a,
+            },
+            PlannedDirs {
+                name: "B",
+                is_dependency: true,
+                directories: &b,
+            },
+        ];
+        let msg = plan_directory_ownership(&registry, &plan)
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("Shared"), "got: {msg}");
+    }
+
+    #[test]
+    fn explicit_target_conflicting_with_registry_is_error() {
+        let mut registry = registry_with("altoholic", "curseforge");
+        registry.addons.get_mut("altoholic").unwrap().directories = dirs(&["DataStore"]);
+        let datastore = dirs(&["DataStore"]);
+        let plan = [PlannedDirs {
+            name: "DataStore",
+            is_dependency: false,
+            directories: &datastore,
+        }];
+        assert!(plan_directory_ownership(&registry, &plan).is_err());
     }
 }
